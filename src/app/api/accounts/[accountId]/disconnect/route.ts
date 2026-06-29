@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requestAccountRestart, setAccountState } from "@/lib/db";
+import { requestAccountRestart, setAccountState } from "@/lib/store";
 
 interface Ctx {
   params: Promise<{ accountId: string }>;
@@ -8,7 +8,7 @@ interface Ctx {
 export async function POST(_req: NextRequest, { params }: Ctx) {
   const { accountId } = await params;
   const id = Number(accountId);
-  setAccountState(id, { status: "disconnected", qr_string: null, phone: null });
-  requestAccountRestart(id);
+  await setAccountState(id, { status: "disconnected", qr_string: null, phone: null });
+  await requestAccountRestart(id);
   return NextResponse.json({ ok: true });
 }

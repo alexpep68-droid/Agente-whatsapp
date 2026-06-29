@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAccountById, updateAccountSettings } from "@/lib/db";
+import { getAccountById, updateAccountSettings } from "@/lib/store";
 
 interface Ctx {
   params: Promise<{ accountId: string }>;
@@ -7,7 +7,7 @@ interface Ctx {
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { accountId } = await params;
-  const account = getAccountById(Number(accountId));
+  const account = await getAccountById(Number(accountId));
   if (!account) return NextResponse.json({ error: "Cuenta no encontrada" }, { status: 404 });
   return NextResponse.json({ account });
 }
@@ -19,7 +19,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     system_prompt?: string;
     ai_enabled?: boolean;
   } | null;
-  const account = updateAccountSettings(Number(accountId), body ?? {});
+  const account = await updateAccountSettings(Number(accountId), body ?? {});
   if (!account) return NextResponse.json({ error: "Cuenta no encontrada" }, { status: 404 });
   return NextResponse.json({ account });
 }

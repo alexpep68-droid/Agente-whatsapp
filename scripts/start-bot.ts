@@ -1,7 +1,7 @@
 import "./env-loader";
 import fs from "node:fs";
 import path from "node:path";
-import { consumeAccountRestarts, getAccountById, listAccounts, setAccountState } from "../src/lib/db";
+import { consumeAccountRestarts, getAccountById, listAccounts, setAccountState } from "../src/lib/store";
 import { startAccountBot, type BotHandle } from "../src/lib/baileys/client";
 
 const handles = new Map<number, BotHandle>();
@@ -18,11 +18,11 @@ async function stopAccount(accountId: number, removeAuth = false) {
   reconnectTimers.delete(accountId);
 
   if (removeAuth) {
-    const account = getAccountById(accountId);
+    const account = await getAccountById(accountId);
     if (account) {
       fs.rmSync(path.resolve(process.cwd(), "auth", account.slug), { recursive: true, force: true });
     }
-    setAccountState(accountId, { status: "disconnected", qr_string: null, phone: null });
+    await setAccountState(accountId, { status: "disconnected", qr_string: null, phone: null });
   }
 }
 
@@ -36,7 +36,7 @@ function scheduleReconnect(accountId: number, delayMs: number) {
 }
 
 async function startAccount(accountId: number) {
-  const account = getAccountById(accountId);
+  const account = await getAccountById(accountId);
   if (!account) return;
   await stopAccount(accountId);
   console.log(`[bot:${accountId}] iniciando cuenta ${account.name}`);
@@ -46,14 +46,16 @@ async function startAccount(accountId: number) {
 
 async function main() {
   console.log("[bot] iniciando cuentas");
-  for (const account of listAccounts()) {
+  for (const account of await listAccounts()) {
     await startAccount(account.id);
   }
 
   setInterval(() => {
-    for (const accountId of consumeAccountRestarts()) {
+    void (async () => {
+    for (const accountId of await consumeAccountRestarts()) {
       void stopAccount(accountId, true).then(() => startAccount(accountId));
     }
+    })().catch((err) => console.error("[bot] error revisando reinicios", err));
   }, 1000);
 }
 

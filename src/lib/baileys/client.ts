@@ -10,7 +10,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import qrcodeTerminal from "qrcode-terminal";
-import { setAccountState, type Account } from "../db";
+import { setAccountState, type Account } from "../store";
 import { flushOutbox, handleIncomingMessage } from "./handler";
 
 export interface BotHandle {
@@ -82,17 +82,17 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
     const { connection, qr, lastDisconnect } = update;
 
     if (qr) {
-      setAccountState(accountId, { status: "qr", qr_string: qr, phone: null });
+      void setAccountState(accountId, { status: "qr", qr_string: qr, phone: null });
       qrcodeTerminal.generate(qr, { small: true });
     }
 
     if (connection === "connecting") {
-      setAccountState(accountId, { status: "connecting" });
+      void setAccountState(accountId, { status: "connecting" });
     }
 
     if (connection === "open") {
       connected = true;
-      setAccountState(accountId, { status: "connected", qr_string: null, phone: phoneFromSocket(sock) });
+      void setAccountState(accountId, { status: "connected", qr_string: null, phone: phoneFromSocket(sock) });
       console.log(`[bot:${accountId}] conectado`);
     }
 
@@ -101,7 +101,7 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
       const code = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
       console.warn(`[bot:${accountId}] conexion cerrada code=${code ?? "desconocido"}`);
       if (code === DisconnectReason.loggedOut) {
-        setAccountState(accountId, { status: "disconnected", qr_string: null, phone: null });
+        void setAccountState(accountId, { status: "disconnected", qr_string: null, phone: null });
         return;
       }
       onReconnect(accountId, code === 440 ? 15000 : 5000);

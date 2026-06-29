@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createQuickReply, getAccountById, listQuickReplies } from "@/lib/db";
+import { createQuickReply, getAccountById, listQuickReplies } from "@/lib/store";
 
 export async function GET(req: NextRequest) {
   const accountId = Number(req.nextUrl.searchParams.get("accountId"));
-  if (!accountId || !getAccountById(accountId)) {
+  if (!accountId || !(await getAccountById(accountId))) {
     return NextResponse.json({ error: "Cuenta no encontrada" }, { status: 404 });
   }
-  return NextResponse.json({ quickReplies: listQuickReplies(accountId) });
+  return NextResponse.json({ quickReplies: await listQuickReplies(accountId) });
 }
 
 export async function POST(req: NextRequest) {
@@ -14,11 +14,11 @@ export async function POST(req: NextRequest) {
   const accountId = Number(body?.accountId);
   const title = body?.title?.trim();
   const text = body?.text?.trim();
-  if (!accountId || !getAccountById(accountId)) {
+  if (!accountId || !(await getAccountById(accountId))) {
     return NextResponse.json({ error: "Cuenta no encontrada" }, { status: 404 });
   }
   if (!title || !text) {
     return NextResponse.json({ error: "Titulo y texto son obligatorios" }, { status: 400 });
   }
-  return NextResponse.json({ quickReply: createQuickReply(accountId, { title, text }) });
+  return NextResponse.json({ quickReply: await createQuickReply(accountId, { title, text }) });
 }

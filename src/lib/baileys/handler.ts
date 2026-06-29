@@ -12,8 +12,9 @@ import {
   insertMessage,
   markOutboxSent,
   pauseAccountAi,
-} from "../db";
+} from "../store";
 import { generateReply } from "../openrouter";
+import { hasOnlineStorage, uploadMedia } from "../media-storage";
 
 const botEchoes = new Map<string, number>();
 const ECHO_TTL_MS = 5 * 60 * 1000;
@@ -99,7 +100,6 @@ function extensionForMime(mime: string, fileName?: string) {
 async function saveMediaAttachment(accountId: number, sock: WASocket, msg: proto.IWebMessageInfo) {
   const info = mediaInfo(msg.message);
   if (!info) return null;
-  if (process.env.VERCEL) return null;
 
   try {
     const buffer = await downloadMediaMessage(
@@ -111,10 +111,15 @@ async function saveMediaAttachment(accountId: number, sock: WASocket, msg: proto
         reuploadRequest: sock.updateMediaMessage,
       },
     );
-    const uploadDir = path.resolve(process.cwd(), "public", "uploads", "whatsapp", String(accountId));
-    fs.mkdirSync(uploadDir, { recursive: true });
     const ext = extensionForMime(info.mime, info.fileName);
     const fileName = `${Date.now()}-${randomUUID()}.${ext}`;
+    if (hasOnlineStorage()) {
+      const url = await uploadMedia(`whatsapp/${accountId}/${fileName}`, buffer, info.mime);
+      if (url) return { url, type: info.type };
+    }
+
+    const uploadDir = path.resolve(process.cwd(), "public", "uploads", "whatsapp", String(accountId));
+    fs.mkdirSync(uploadDir, { recursive: true });
     fs.writeFileSync(path.join(uploadDir, fileName), buffer);
     return {
       url: `/uploads/whatsapp/${accountId}/${fileName}`,
@@ -183,8 +188,8 @@ export async function handleIncomingMessage(
   const role = msg.key.fromMe ? "human" : "user";
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
-  const convo = getOrCreateConversation(accountId, phone, msg.pushName ?? undefined);
-  insertMessage(convo.id, role, text, attachment);
+  const convo = await getOrCreateConversation(accountId, phone, msg.pushName ?? undefined);
+  await insertMessage(convo.id, role, text, attachment);
 
   if (msg.key.fromMe) return;
   if (sourceType !== "notify") {
@@ -192,45 +197,51 @@ export async function handleIncomingMessage(
     return;
   }
 
-  const account = getAccountById(accountId);
-  const fresh = getConversationById(convo.id);
+  const account = await getAccountById(accountId);
+  const fresh = await getConversationById(convo.id);
   if (!account || !account.ai_enabled || account.ai_status === "paused" || !fresh || fresh.mode !== "AI") return;
 
   const started = Date.now();
-  const history = getRecentHistory(convo.id, 20);
+  const history = await getRecentHistory(convo.id, 20);
   console.log(`[bot:${accountId}] llamando LLM con ${history.length} mensajes...`);
   let reply: string;
   try {
     reply = await generateReply(account.system_prompt, history);
   } catch (err) {
     const reason = err instanceof Error ? err.message : "IA pausada por error desconocido.";
-    pauseAccountAi(accountId, reason);
+    await pauseAccountAi(accountId, reason);
     console.warn(`[bot:${accountId}] ${reason}`);
     return;
   }
   console.log(`[bot:${accountId}] LLM respondio en ${Date.now() - started}ms`);
 
-  insertMessage(convo.id, "assistant", reply);
+  await insertMessage(convo.id, "assistant", reply);
   rememberBotEcho(accountId, remoteJid, reply);
   await sock.sendMessage(remoteJid, { text: reply });
   console.log(`[bot:${accountId}] -> Enviado a ${phone}`);
 }
 
 export async function flushOutbox(accountId: number, sock: WASocket) {
-  const pending = getPendingOutbox(accountId, 20);
+  const pending = await getPendingOutbox(accountId, 20);
   for (const item of pending) {
     try {
       const jid = sendJidFromStoredPhone(item.phone);
       rememberBotEcho(accountId, jid, item.content);
       if (item.media_url && item.media_type === "image") {
-        const filePath = path.resolve(process.cwd(), "public", item.media_url.replace(/^\/+/, ""));
         const caption = item.content === "[Imagen enviada]" ? undefined : item.content;
         rememberBotEcho(accountId, jid, caption || "[Imagen recibida]");
-        await sock.sendMessage(jid, { image: fs.readFileSync(filePath), caption });
+        if (/^https?:\/\//.test(item.media_url)) {
+          const response = await fetch(item.media_url);
+          const buffer = Buffer.from(await response.arrayBuffer());
+          await sock.sendMessage(jid, { image: buffer, caption });
+        } else {
+          const filePath = path.resolve(process.cwd(), "public", item.media_url.replace(/^\/+/, ""));
+          await sock.sendMessage(jid, { image: fs.readFileSync(filePath), caption });
+        }
       } else {
         await sock.sendMessage(jid, { text: item.content });
       }
-      markOutboxSent(item.id);
+      await markOutboxSent(item.id);
       console.log(`[bot:${accountId}] outbox enviado a ${item.phone}`);
     } catch (err) {
       console.warn(`[bot:${accountId}] no se pudo enviar outbox ${item.id}`, err);

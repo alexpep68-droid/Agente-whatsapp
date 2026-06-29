@@ -88,7 +88,7 @@ export interface CustomerProfile {
   updated_at: number;
 }
 
-const DEFAULT_QUICK_REPLIES = [
+export const DEFAULT_QUICK_REPLIES = [
   {
     title: "Inicio",
     text: `¡Hola! 😊 Gracias por contactar a *Almalu Cocinas Integrales y Closets*.

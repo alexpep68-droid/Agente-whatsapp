@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteQuickReply, updateQuickReply } from "@/lib/db";
+import { deleteQuickReply, updateQuickReply } from "@/lib/store";
 
 interface Ctx {
   params: Promise<{ quickReplyId: string }>;
@@ -13,12 +13,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!title || !text) {
     return NextResponse.json({ error: "Titulo y texto son obligatorios" }, { status: 400 });
   }
-  updateQuickReply(Number(quickReplyId), { title, text });
+  await updateQuickReply(Number(quickReplyId), { title, text });
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { quickReplyId } = await params;
-  deleteQuickReply(Number(quickReplyId));
+  await deleteQuickReply(Number(quickReplyId));
   return NextResponse.json({ ok: true });
 }

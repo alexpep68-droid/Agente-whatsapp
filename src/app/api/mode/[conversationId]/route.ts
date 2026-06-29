@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setMode, type ConversationMode } from "@/lib/db";
+import { setMode, type ConversationMode } from "@/lib/store";
 
 interface Ctx {
   params: Promise<{ conversationId: string }>;
@@ -11,6 +11,6 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   if (body?.mode !== "AI" && body?.mode !== "HUMAN") {
     return NextResponse.json({ error: "Modo invalido" }, { status: 400 });
   }
-  setMode(Number(conversationId), body.mode);
+  await setMode(Number(conversationId), body.mode);
   return NextResponse.json({ ok: true });
 }

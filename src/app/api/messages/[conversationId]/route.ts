@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { enqueueOutbox, getConversationById, getMessages, insertMessage } from "@/lib/db";
+import { enqueueOutbox, getConversationById, getMessages, insertMessage } from "@/lib/store";
+import { hasOnlineStorage, uploadMedia } from "@/lib/media-storage";
 
 interface Ctx {
   params: Promise<{ conversationId: string }>;
@@ -10,7 +11,7 @@ interface Ctx {
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { conversationId } = await params;
-  return NextResponse.json({ messages: getMessages(Number(conversationId), 100) });
+  return NextResponse.json({ messages: await getMessages(Number(conversationId), 100) });
 }
 
 function imageExtension(file: File) {
@@ -21,10 +22,6 @@ function imageExtension(file: File) {
 }
 
 async function saveOutgoingImage(conversationId: number, file: File) {
-  if (process.env.VERCEL) {
-    throw new Error("El envio de imagenes en linea requiere activar almacenamiento online.");
-  }
-
   if (!file.type.startsWith("image/")) {
     throw new Error("Solo se permiten imagenes");
   }
@@ -32,17 +29,22 @@ async function saveOutgoingImage(conversationId: number, file: File) {
     throw new Error("La imagen no debe pasar de 8 MB");
   }
 
-  const uploadDir = path.resolve(process.cwd(), "public", "uploads", "outgoing", String(conversationId));
-  fs.mkdirSync(uploadDir, { recursive: true });
   const fileName = `${Date.now()}-${randomUUID()}.${imageExtension(file)}`;
   const bytes = Buffer.from(await file.arrayBuffer());
+  if (hasOnlineStorage()) {
+    const url = await uploadMedia(`outgoing/${conversationId}/${fileName}`, bytes, file.type);
+    if (url) return url;
+  }
+
+  const uploadDir = path.resolve(process.cwd(), "public", "uploads", "outgoing", String(conversationId));
+  fs.mkdirSync(uploadDir, { recursive: true });
   fs.writeFileSync(path.join(uploadDir, fileName), bytes);
   return `/uploads/outgoing/${conversationId}/${fileName}`;
 }
 
 export async function POST(req: NextRequest, { params }: Ctx) {
   const { conversationId } = await params;
-  const convo = getConversationById(Number(conversationId));
+  const convo = await getConversationById(Number(conversationId));
   if (!convo) return NextResponse.json({ error: "Conversacion no encontrada" }, { status: 404 });
 
   const contentType = req.headers.get("content-type") || "";
@@ -56,8 +58,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       const url = await saveOutgoingImage(convo.id, file);
       const content = caption || "[Imagen enviada]";
       const media = { url, type: "image" };
-      const messageId = insertMessage(convo.id, "human", content, media);
-      enqueueOutbox(convo.account_id, convo.id, convo.phone, content, media);
+      const messageId = await insertMessage(convo.id, "human", content, media);
+      await enqueueOutbox(convo.account_id, convo.id, convo.phone, content, media);
       return NextResponse.json({ ok: true, messageId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "No se pudo guardar la imagen";
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const content = body?.content?.trim();
   if (!content) return NextResponse.json({ error: "Mensaje vacio" }, { status: 400 });
 
-  const messageId = insertMessage(convo.id, "human", content);
-  enqueueOutbox(convo.account_id, convo.id, convo.phone, content);
+  const messageId = await insertMessage(convo.id, "human", content);
+  await enqueueOutbox(convo.account_id, convo.id, convo.phone, content);
   return NextResponse.json({ ok: true, messageId });
 }
