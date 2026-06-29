@@ -26,6 +26,19 @@ function messageTextWithLinks(text: string) {
   });
 }
 
+function isAutomaticMediaLabel(message: Message) {
+  const text = message.content.trim();
+  if (!message.media_url) return false;
+  return [
+    "[Imagen recibida]",
+    "[Imagen enviada]",
+    "[Audio recibido]",
+    "[Audio enviado]",
+    "[Video recibido]",
+    "[Video enviado]",
+  ].includes(text);
+}
+
 function formatAudioTime(seconds: number) {
   if (!Number.isFinite(seconds)) return "0:00";
   const minutes = Math.floor(seconds / 60);
@@ -117,13 +130,14 @@ function AudioPlayer({ src }: { src: string }) {
 export function MessageBubble({ message }: { message: Message }) {
   const outgoing = message.role !== "user";
   const color = message.role === "assistant" ? "bg-emerald-100" : message.role === "human" ? "bg-amber-100" : "bg-white";
+  const visibleText = isAutomaticMediaLabel(message) ? "" : message.content;
   return (
     <div className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[68%] rounded-md border border-black/5 px-3 py-2 shadow-sm ${color}`}>
         {message.media_url && message.media_type === "image" ? (
           <a href={message.media_url} target="_blank" rel="noreferrer">
             <img
-              alt={message.content || "Imagen recibida"}
+              alt={visibleText || "Imagen"}
               className="mb-2 max-h-80 w-full rounded object-contain"
               src={message.media_url}
             />
@@ -145,7 +159,7 @@ export function MessageBubble({ message }: { message: Message }) {
             Abrir archivo recibido
           </a>
         ) : null}
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">{messageTextWithLinks(message.content)}</p>
+        {visibleText ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{messageTextWithLinks(visibleText)}</p> : null}
         <div className="mt-1 text-right text-[11px] text-zinc-500">{timeLabel(message.created_at)}</div>
       </div>
     </div>
