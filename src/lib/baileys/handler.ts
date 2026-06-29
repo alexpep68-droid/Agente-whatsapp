@@ -242,6 +242,10 @@ export async function flushOutbox(accountId: number, sock: WASocket) {
         const caption = item.content === "[Imagen enviada]" ? undefined : item.content;
         rememberBotEcho(accountId, jid, caption || "[Imagen recibida]");
         await sock.sendMessage(jid, { image: await bufferFromMediaUrl(item.media_url), caption });
+      } else if (item.media_url && item.media_type === "video") {
+        const caption = item.content === "[Video enviado]" ? undefined : item.content;
+        rememberBotEcho(accountId, jid, caption || "[Video recibido]");
+        await sock.sendMessage(jid, { video: await bufferFromMediaUrl(item.media_url), caption });
       } else if (item.media_url && item.media_type === "audio") {
         await sock.sendMessage(jid, {
           audio: await bufferFromMediaUrl(item.media_url),

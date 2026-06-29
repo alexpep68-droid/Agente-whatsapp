@@ -21,6 +21,7 @@ function mediaExtension(file: File) {
   if (file.type.includes("mpeg")) return "mp3";
   if (file.type.includes("ogg")) return "ogg";
   if (file.type.includes("webm")) return "webm";
+  if (file.type.startsWith("video/") && file.type.includes("mp4")) return "mp4";
   if (file.type.includes("mp4")) return "m4a";
   return "jpg";
 }
@@ -28,7 +29,8 @@ function mediaExtension(file: File) {
 function mediaTypeFor(file: File) {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("audio/")) return "audio";
-  throw new Error("Solo se permiten imagenes o audios");
+  if (file.type.startsWith("video/")) return "video";
+  throw new Error("Solo se permiten imagenes, videos o audios");
 }
 
 async function saveOutgoingMedia(conversationId: number, file: File) {
@@ -38,6 +40,9 @@ async function saveOutgoingMedia(conversationId: number, file: File) {
   }
   if (mediaType === "audio" && file.size > 16 * 1024 * 1024) {
     throw new Error("El audio no debe pasar de 16 MB");
+  }
+  if (mediaType === "video" && file.size > 32 * 1024 * 1024) {
+    throw new Error("El video no debe pasar de 32 MB");
   }
 
   const fileName = `${Date.now()}-${randomUUID()}.${mediaExtension(file)}`;
@@ -63,16 +68,16 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const formData = await req.formData();
     const file = formData.get("media") || formData.get("image");
     const caption = String(formData.get("content") || "").trim();
-    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen o audio" }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen, video o audio" }, { status: 400 });
 
     try {
       const media = await saveOutgoingMedia(convo.id, file);
-      const content = caption || (media.type === "audio" ? "[Audio enviado]" : "[Imagen enviada]");
+      const content = caption || (media.type === "audio" ? "[Audio enviado]" : media.type === "video" ? "[Video enviado]" : "[Imagen enviada]");
       const messageId = await insertMessage(convo.id, "human", content, media);
       await enqueueOutbox(convo.account_id, convo.id, convo.phone, content, media);
       return NextResponse.json({ ok: true, messageId });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "No se pudo guardar la imagen";
+      const message = err instanceof Error ? err.message : "No se pudo guardar el archivo";
       return NextResponse.json({ error: message }, { status: 400 });
     }
   }

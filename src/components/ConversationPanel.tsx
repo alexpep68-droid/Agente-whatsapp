@@ -59,12 +59,15 @@ export function ConversationPanel({
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
+  const [selectedVideo, setSelectedVideo] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [selectedVideoPreview, setSelectedVideoPreview] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabels(parseLabels(conversation?.label));
@@ -72,6 +75,7 @@ export function ConversationPanel({
     setShowLabels(false);
     setSelectedImage(null);
     setSelectedAudio(null);
+    setSelectedVideo(null);
   }, [conversation?.id, conversation?.label, conversation?.pipeline_stage]);
 
   useEffect(() => {
@@ -83,6 +87,16 @@ export function ConversationPanel({
     setSelectedImagePreview(url);
     return () => URL.revokeObjectURL(url);
   }, [selectedImage]);
+
+  useEffect(() => {
+    if (!selectedVideo) {
+      setSelectedVideoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(selectedVideo);
+    setSelectedVideoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedVideo]);
 
   useEffect(() => {
     if (!conversation) return;
@@ -167,12 +181,13 @@ export function ConversationPanel({
   async function sendMessage(contentOverride?: string) {
     if (!conversation) return;
     const content = (contentOverride ?? draft).trim();
-    const media = contentOverride ? null : selectedImage || selectedAudio;
+    const media = contentOverride ? null : selectedImage || selectedAudio || selectedVideo;
     if (!content && !media) return;
     if (!contentOverride) {
       setDraft("");
       setSelectedImage(null);
       setSelectedAudio(null);
+      setSelectedVideo(null);
     }
     setShowQuickReplies(false);
     if (media) {
@@ -197,12 +212,21 @@ export function ConversationPanel({
     if (!file) return;
     setSelectedImage(file);
     setSelectedAudio(null);
+    setSelectedVideo(null);
   }
 
   function pickAudio(file: File | undefined) {
     if (!file) return;
     setSelectedAudio(file);
     setSelectedImage(null);
+    setSelectedVideo(null);
+  }
+
+  function pickVideo(file: File | undefined) {
+    if (!file) return;
+    setSelectedVideo(file);
+    setSelectedImage(null);
+    setSelectedAudio(null);
   }
 
   function insertQuickReply(text: string) {
@@ -394,19 +418,21 @@ export function ConversationPanel({
       </div>
 
       <footer className="border-t border-zinc-200 bg-white p-4">
-        {(selectedImage && selectedImagePreview) || selectedAudio ? (
+        {(selectedImage && selectedImagePreview) || selectedAudio || (selectedVideo && selectedVideoPreview) ? (
           <div className="mb-3 flex items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
             {selectedImage && selectedImagePreview ? (
               <img alt="Imagen lista para enviar" className="h-20 w-20 rounded object-cover" src={selectedImagePreview} />
+            ) : selectedVideo && selectedVideoPreview ? (
+              <video className="h-20 w-20 rounded object-cover" src={selectedVideoPreview} muted />
             ) : (
               <div className="grid h-20 w-20 place-items-center rounded bg-white text-sm font-semibold text-emerald-800">
                 Audio
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name}</p>
+              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name || selectedVideo?.name}</p>
               <p className="text-xs text-emerald-700">
-                {selectedAudio ? "Se enviara como audio." : "Se enviara con el mensaje como pie de foto."}
+                {selectedAudio ? "Se enviara como audio." : selectedVideo ? "Se enviara como video." : "Se enviara con el mensaje como pie de foto."}
               </p>
             </div>
             <button
@@ -414,6 +440,7 @@ export function ConversationPanel({
               onClick={() => {
                 setSelectedImage(null);
                 setSelectedAudio(null);
+                setSelectedVideo(null);
               }}
               type="button"
             >
@@ -498,6 +525,13 @@ export function ConversationPanel({
               onChange={(event) => pickAudio(event.target.files?.[0])}
               type="file"
             />
+            <input
+              ref={videoInputRef}
+              accept="video/mp4"
+              className="hidden"
+              onChange={(event) => pickVideo(event.target.files?.[0])}
+              type="file"
+            />
             <button
               className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
               onClick={() => imageInputRef.current?.click()}
@@ -511,6 +545,13 @@ export function ConversationPanel({
               type="button"
             >
               Audio
+            </button>
+            <button
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              onClick={() => videoInputRef.current?.click()}
+              type="button"
+            >
+              Video
             </button>
             <textarea
               className="flex-1 resize-none rounded-[24px] border border-zinc-300 px-5 py-3 text-sm leading-relaxed outline-none transition-[height] focus:border-emerald-500"
