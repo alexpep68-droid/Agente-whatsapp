@@ -58,17 +58,20 @@ export function ConversationPanel({
   const [profileDraft, setProfileDraft] = useState<CustomerProfile | null>(null);
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabels(parseLabels(conversation?.label));
     setPipelineStageState(conversation?.pipeline_stage || "Nuevo cliente");
     setShowLabels(false);
     setSelectedImage(null);
+    setSelectedAudio(null);
   }, [conversation?.id, conversation?.label, conversation?.pipeline_stage]);
 
   useEffect(() => {
@@ -164,16 +167,17 @@ export function ConversationPanel({
   async function sendMessage(contentOverride?: string) {
     if (!conversation) return;
     const content = (contentOverride ?? draft).trim();
-    const image = contentOverride ? null : selectedImage;
-    if (!content && !image) return;
+    const media = contentOverride ? null : selectedImage || selectedAudio;
+    if (!content && !media) return;
     if (!contentOverride) {
       setDraft("");
       setSelectedImage(null);
+      setSelectedAudio(null);
     }
     setShowQuickReplies(false);
-    if (image) {
+    if (media) {
       const formData = new FormData();
-      formData.set("image", image);
+      formData.set("media", media);
       formData.set("content", content);
       await fetch(`/api/messages/${conversation.id}`, {
         method: "POST",
@@ -192,6 +196,13 @@ export function ConversationPanel({
   function pickImage(file: File | undefined) {
     if (!file) return;
     setSelectedImage(file);
+    setSelectedAudio(null);
+  }
+
+  function pickAudio(file: File | undefined) {
+    if (!file) return;
+    setSelectedAudio(file);
+    setSelectedImage(null);
   }
 
   function insertQuickReply(text: string) {
@@ -383,16 +394,27 @@ export function ConversationPanel({
       </div>
 
       <footer className="border-t border-zinc-200 bg-white p-4">
-        {selectedImage && selectedImagePreview ? (
+        {(selectedImage && selectedImagePreview) || selectedAudio ? (
           <div className="mb-3 flex items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
-            <img alt="Imagen lista para enviar" className="h-20 w-20 rounded object-cover" src={selectedImagePreview} />
+            {selectedImage && selectedImagePreview ? (
+              <img alt="Imagen lista para enviar" className="h-20 w-20 rounded object-cover" src={selectedImagePreview} />
+            ) : (
+              <div className="grid h-20 w-20 place-items-center rounded bg-white text-sm font-semibold text-emerald-800">
+                Audio
+              </div>
+            )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage.name}</p>
-              <p className="text-xs text-emerald-700">Se enviara con el mensaje como pie de foto.</p>
+              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name}</p>
+              <p className="text-xs text-emerald-700">
+                {selectedAudio ? "Se enviara como audio." : "Se enviara con el mensaje como pie de foto."}
+              </p>
             </div>
             <button
               className="h-9 rounded border border-emerald-300 px-3 text-sm font-semibold text-emerald-800"
-              onClick={() => setSelectedImage(null)}
+              onClick={() => {
+                setSelectedImage(null);
+                setSelectedAudio(null);
+              }}
               type="button"
             >
               Quitar
@@ -469,12 +491,26 @@ export function ConversationPanel({
               onChange={(event) => pickImage(event.target.files?.[0])}
               type="file"
             />
+            <input
+              ref={audioInputRef}
+              accept="audio/*"
+              className="hidden"
+              onChange={(event) => pickAudio(event.target.files?.[0])}
+              type="file"
+            />
             <button
               className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
               onClick={() => imageInputRef.current?.click()}
               type="button"
             >
               Imagen
+            </button>
+            <button
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              onClick={() => audioInputRef.current?.click()}
+              type="button"
+            >
+              Audio
             </button>
             <textarea
               className="flex-1 resize-none rounded-[24px] border border-zinc-300 px-5 py-3 text-sm leading-relaxed outline-none transition-[height] focus:border-emerald-500"

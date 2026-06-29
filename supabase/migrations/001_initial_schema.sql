@@ -98,7 +98,20 @@ values (
   'whatsapp-media',
   false,
   10485760,
-  array['image/jpeg','image/png','image/webp','application/pdf','video/mp4','audio/ogg','audio/mpeg']
+  array[
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'application/pdf',
+    'video/mp4',
+    'audio/ogg',
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/aac',
+    'audio/webm',
+    'audio/wav',
+    'audio/x-wav'
+  ]
 )
 on conflict (id) do update set
   public = excluded.public,

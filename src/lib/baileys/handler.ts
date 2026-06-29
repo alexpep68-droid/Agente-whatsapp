@@ -85,16 +85,27 @@ function mediaInfo(message: proto.IMessage | null | undefined) {
 
 function extensionForMime(mime: string, fileName?: string) {
   const fileExt = fileName ? path.extname(fileName).replace(".", "") : "";
+  const baseMime = mime.split(";")[0]?.trim().toLowerCase() || mime;
   if (fileExt) return fileExt.toLowerCase();
-  if (mime.includes("jpeg")) return "jpg";
-  if (mime.includes("png")) return "png";
-  if (mime.includes("webp")) return "webp";
-  if (mime.includes("gif")) return "gif";
-  if (mime.includes("mp4")) return "mp4";
-  if (mime.includes("mpeg")) return "mp3";
-  if (mime.includes("ogg")) return "ogg";
-  if (mime.includes("pdf")) return "pdf";
+  if (baseMime.includes("jpeg")) return "jpg";
+  if (baseMime.includes("png")) return "png";
+  if (baseMime.includes("webp")) return "webp";
+  if (baseMime.includes("gif")) return "gif";
+  if (baseMime.includes("mp4")) return "mp4";
+  if (baseMime.includes("mpeg")) return "mp3";
+  if (baseMime.includes("ogg")) return "ogg";
+  if (baseMime.includes("webm")) return "webm";
+  if (baseMime.includes("pdf")) return "pdf";
   return "bin";
+}
+
+async function bufferFromMediaUrl(mediaUrl: string) {
+  if (/^https?:\/\//.test(mediaUrl)) {
+    const response = await fetch(mediaUrl);
+    return Buffer.from(await response.arrayBuffer());
+  }
+  const filePath = path.resolve(process.cwd(), "public", mediaUrl.replace(/^\/+/, ""));
+  return fs.readFileSync(filePath);
 }
 
 async function saveMediaAttachment(accountId: number, sock: WASocket, msg: proto.IWebMessageInfo) {
@@ -230,14 +241,13 @@ export async function flushOutbox(accountId: number, sock: WASocket) {
       if (item.media_url && item.media_type === "image") {
         const caption = item.content === "[Imagen enviada]" ? undefined : item.content;
         rememberBotEcho(accountId, jid, caption || "[Imagen recibida]");
-        if (/^https?:\/\//.test(item.media_url)) {
-          const response = await fetch(item.media_url);
-          const buffer = Buffer.from(await response.arrayBuffer());
-          await sock.sendMessage(jid, { image: buffer, caption });
-        } else {
-          const filePath = path.resolve(process.cwd(), "public", item.media_url.replace(/^\/+/, ""));
-          await sock.sendMessage(jid, { image: fs.readFileSync(filePath), caption });
-        }
+        await sock.sendMessage(jid, { image: await bufferFromMediaUrl(item.media_url), caption });
+      } else if (item.media_url && item.media_type === "audio") {
+        await sock.sendMessage(jid, {
+          audio: await bufferFromMediaUrl(item.media_url),
+          mimetype: "audio/ogg; codecs=opus",
+          ptt: false,
+        });
       } else {
         await sock.sendMessage(jid, { text: item.content });
       }

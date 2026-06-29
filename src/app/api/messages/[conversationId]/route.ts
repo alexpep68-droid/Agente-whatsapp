@@ -14,32 +14,43 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return NextResponse.json({ messages: await getMessages(Number(conversationId), 100) });
 }
 
-function imageExtension(file: File) {
+function mediaExtension(file: File) {
   if (file.name.includes(".")) return file.name.split(".").pop()?.toLowerCase() || "jpg";
   if (file.type.includes("png")) return "png";
   if (file.type.includes("webp")) return "webp";
+  if (file.type.includes("mpeg")) return "mp3";
+  if (file.type.includes("ogg")) return "ogg";
+  if (file.type.includes("webm")) return "webm";
+  if (file.type.includes("mp4")) return "m4a";
   return "jpg";
 }
 
-async function saveOutgoingImage(conversationId: number, file: File) {
-  if (!file.type.startsWith("image/")) {
-    throw new Error("Solo se permiten imagenes");
-  }
-  if (file.size > 8 * 1024 * 1024) {
+function mediaTypeFor(file: File) {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("audio/")) return "audio";
+  throw new Error("Solo se permiten imagenes o audios");
+}
+
+async function saveOutgoingMedia(conversationId: number, file: File) {
+  const mediaType = mediaTypeFor(file);
+  if (mediaType === "image" && file.size > 8 * 1024 * 1024) {
     throw new Error("La imagen no debe pasar de 8 MB");
   }
+  if (mediaType === "audio" && file.size > 16 * 1024 * 1024) {
+    throw new Error("El audio no debe pasar de 16 MB");
+  }
 
-  const fileName = `${Date.now()}-${randomUUID()}.${imageExtension(file)}`;
+  const fileName = `${Date.now()}-${randomUUID()}.${mediaExtension(file)}`;
   const bytes = Buffer.from(await file.arrayBuffer());
   if (hasOnlineStorage()) {
     const url = await uploadMedia(`outgoing/${conversationId}/${fileName}`, bytes, file.type);
-    if (url) return url;
+    if (url) return { url, type: mediaType };
   }
 
   const uploadDir = path.resolve(process.cwd(), "public", "uploads", "outgoing", String(conversationId));
   fs.mkdirSync(uploadDir, { recursive: true });
   fs.writeFileSync(path.join(uploadDir, fileName), bytes);
-  return `/uploads/outgoing/${conversationId}/${fileName}`;
+  return { url: `/uploads/outgoing/${conversationId}/${fileName}`, type: mediaType };
 }
 
 export async function POST(req: NextRequest, { params }: Ctx) {
@@ -50,14 +61,13 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const contentType = req.headers.get("content-type") || "";
   if (contentType.includes("multipart/form-data")) {
     const formData = await req.formData();
-    const file = formData.get("image");
+    const file = formData.get("media") || formData.get("image");
     const caption = String(formData.get("content") || "").trim();
-    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen" }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen o audio" }, { status: 400 });
 
     try {
-      const url = await saveOutgoingImage(convo.id, file);
-      const content = caption || "[Imagen enviada]";
-      const media = { url, type: "image" };
+      const media = await saveOutgoingMedia(convo.id, file);
+      const content = caption || (media.type === "audio" ? "[Audio enviado]" : "[Imagen enviada]");
       const messageId = await insertMessage(convo.id, "human", content, media);
       await enqueueOutbox(convo.account_id, convo.id, convo.phone, content, media);
       return NextResponse.json({ ok: true, messageId });

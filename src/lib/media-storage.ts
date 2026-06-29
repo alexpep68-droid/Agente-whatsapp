@@ -16,13 +16,17 @@ export function hasOnlineStorage() {
   return Boolean(storageClient() && process.env.SUPABASE_STORAGE_BUCKET);
 }
 
+function normalizeContentType(contentType: string) {
+  return contentType.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
+}
+
 export async function uploadMedia(path: string, buffer: Buffer, contentType: string) {
   const supabase = storageClient();
   const bucket = process.env.SUPABASE_STORAGE_BUCKET || "whatsapp-media";
   if (!supabase) return null;
 
   const { error } = await supabase.storage.from(bucket).upload(path, buffer, {
-    contentType,
+    contentType: normalizeContentType(contentType),
     upsert: true,
   });
   if (error) throw new Error(error.message);
