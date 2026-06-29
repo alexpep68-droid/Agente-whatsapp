@@ -1,0 +1,9 @@
+node_modules
+.next
+data
+auth
+.env.local
+npm-debug.log*
+*.tsbuildinfo
+public/uploads
+.vercel
