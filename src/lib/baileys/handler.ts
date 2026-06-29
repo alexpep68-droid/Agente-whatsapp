@@ -108,6 +108,29 @@ async function bufferFromMediaUrl(mediaUrl: string) {
   return fs.readFileSync(filePath);
 }
 
+function documentNameFromContent(content: string, mediaUrl: string) {
+  const match = content.trim().match(/^\[Documento (?:recibido|enviado): (.+)\]$/);
+  if (match?.[1]) return match[1];
+  try {
+    return decodeURIComponent(new URL(mediaUrl).pathname.split("/").pop() || "documento.pdf");
+  } catch {
+    return path.basename(mediaUrl) || "documento.pdf";
+  }
+}
+
+function mimeFromFileName(fileName: string) {
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".doc") return "application/msword";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".xls") return "application/vnd.ms-excel";
+  if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (ext === ".csv") return "text/csv";
+  if (ext === ".txt") return "text/plain";
+  if (ext === ".zip") return "application/zip";
+  return "application/octet-stream";
+}
+
 async function saveMediaAttachment(accountId: number, sock: WASocket, msg: proto.IWebMessageInfo) {
   const info = mediaInfo(msg.message);
   if (!info) return null;
@@ -246,6 +269,15 @@ export async function flushOutbox(accountId: number, sock: WASocket) {
         const caption = item.content === "[Video enviado]" ? undefined : item.content;
         rememberBotEcho(accountId, jid, caption || "[Video recibido]");
         await sock.sendMessage(jid, { video: await bufferFromMediaUrl(item.media_url), caption });
+      } else if (item.media_url && item.media_type === "document") {
+        const fileName = documentNameFromContent(item.content, item.media_url);
+        const caption = /^\[Documento enviado(: .*)?\]$/.test(item.content) ? undefined : item.content;
+        await sock.sendMessage(jid, {
+          document: await bufferFromMediaUrl(item.media_url),
+          fileName,
+          mimetype: mimeFromFileName(fileName),
+          caption,
+        });
       } else if (item.media_url && item.media_type === "audio") {
         await sock.sendMessage(jid, {
           audio: await bufferFromMediaUrl(item.media_url),

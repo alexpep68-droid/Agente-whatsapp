@@ -26,11 +26,26 @@ function mediaExtension(file: File) {
   return "jpg";
 }
 
+function isDocument(file: File) {
+  const type = file.type.toLowerCase();
+  return (
+    type === "application/pdf" ||
+    type === "application/msword" ||
+    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    type === "application/vnd.ms-excel" ||
+    type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    type === "text/csv" ||
+    type === "text/plain" ||
+    type === "application/zip"
+  );
+}
+
 function mediaTypeFor(file: File) {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("audio/")) return "audio";
   if (file.type.startsWith("video/")) return "video";
-  throw new Error("Solo se permiten imagenes, videos o audios");
+  if (isDocument(file)) return "document";
+  throw new Error("Solo se permiten imagenes, videos, audios o documentos");
 }
 
 async function saveOutgoingMedia(conversationId: number, file: File) {
@@ -43,6 +58,9 @@ async function saveOutgoingMedia(conversationId: number, file: File) {
   }
   if (mediaType === "video" && file.size > 32 * 1024 * 1024) {
     throw new Error("El video no debe pasar de 32 MB");
+  }
+  if (mediaType === "document" && file.size > 32 * 1024 * 1024) {
+    throw new Error("El documento no debe pasar de 32 MB");
   }
 
   const fileName = `${Date.now()}-${randomUUID()}.${mediaExtension(file)}`;
@@ -68,11 +86,19 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const formData = await req.formData();
     const file = formData.get("media") || formData.get("image");
     const caption = String(formData.get("content") || "").trim();
-    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen, video o audio" }, { status: 400 });
+    if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen, video, audio o documento" }, { status: 400 });
 
     try {
       const media = await saveOutgoingMedia(convo.id, file);
-      const content = caption || (media.type === "audio" ? "[Audio enviado]" : media.type === "video" ? "[Video enviado]" : "[Imagen enviada]");
+      const content =
+        caption ||
+        (media.type === "audio"
+          ? "[Audio enviado]"
+          : media.type === "video"
+            ? "[Video enviado]"
+            : media.type === "document"
+              ? `[Documento enviado: ${file.name}]`
+              : "[Imagen enviada]");
       const messageId = await insertMessage(convo.id, "human", content, media);
       await enqueueOutbox(convo.account_id, convo.id, convo.phone, content, media);
       return NextResponse.json({ ok: true, messageId });

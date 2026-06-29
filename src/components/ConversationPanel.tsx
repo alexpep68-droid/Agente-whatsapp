@@ -60,6 +60,7 @@ export function ConversationPanel({
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<File | null>(null);
+  const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
   const [selectedVideoPreview, setSelectedVideoPreview] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -68,6 +69,7 @@ export function ConversationPanel({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabels(parseLabels(conversation?.label));
@@ -76,6 +78,7 @@ export function ConversationPanel({
     setSelectedImage(null);
     setSelectedAudio(null);
     setSelectedVideo(null);
+    setSelectedDocument(null);
   }, [conversation?.id, conversation?.label, conversation?.pipeline_stage]);
 
   useEffect(() => {
@@ -181,13 +184,14 @@ export function ConversationPanel({
   async function sendMessage(contentOverride?: string) {
     if (!conversation) return;
     const content = (contentOverride ?? draft).trim();
-    const media = contentOverride ? null : selectedImage || selectedAudio || selectedVideo;
+    const media = contentOverride ? null : selectedImage || selectedAudio || selectedVideo || selectedDocument;
     if (!content && !media) return;
     if (!contentOverride) {
       setDraft("");
       setSelectedImage(null);
       setSelectedAudio(null);
       setSelectedVideo(null);
+      setSelectedDocument(null);
     }
     setShowQuickReplies(false);
     if (media) {
@@ -213,6 +217,7 @@ export function ConversationPanel({
     setSelectedImage(file);
     setSelectedAudio(null);
     setSelectedVideo(null);
+    setSelectedDocument(null);
   }
 
   function pickAudio(file: File | undefined) {
@@ -220,6 +225,7 @@ export function ConversationPanel({
     setSelectedAudio(file);
     setSelectedImage(null);
     setSelectedVideo(null);
+    setSelectedDocument(null);
   }
 
   function pickVideo(file: File | undefined) {
@@ -227,6 +233,15 @@ export function ConversationPanel({
     setSelectedVideo(file);
     setSelectedImage(null);
     setSelectedAudio(null);
+    setSelectedDocument(null);
+  }
+
+  function pickDocument(file: File | undefined) {
+    if (!file) return;
+    setSelectedDocument(file);
+    setSelectedImage(null);
+    setSelectedAudio(null);
+    setSelectedVideo(null);
   }
 
   function insertQuickReply(text: string) {
@@ -418,21 +433,31 @@ export function ConversationPanel({
       </div>
 
       <footer className="border-t border-zinc-200 bg-white p-4">
-        {(selectedImage && selectedImagePreview) || selectedAudio || (selectedVideo && selectedVideoPreview) ? (
+        {(selectedImage && selectedImagePreview) || selectedAudio || (selectedVideo && selectedVideoPreview) || selectedDocument ? (
           <div className="mb-3 flex items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
             {selectedImage && selectedImagePreview ? (
               <img alt="Imagen lista para enviar" className="h-20 w-20 rounded object-cover" src={selectedImagePreview} />
             ) : selectedVideo && selectedVideoPreview ? (
               <video className="h-20 w-20 rounded object-cover" src={selectedVideoPreview} muted />
+            ) : selectedDocument ? (
+              <div className="grid h-20 w-20 place-items-center rounded bg-white text-sm font-semibold text-emerald-800">
+                Archivo
+              </div>
             ) : (
               <div className="grid h-20 w-20 place-items-center rounded bg-white text-sm font-semibold text-emerald-800">
                 Audio
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name || selectedVideo?.name}</p>
+              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name || selectedVideo?.name || selectedDocument?.name}</p>
               <p className="text-xs text-emerald-700">
-                {selectedAudio ? "Se enviara como audio." : selectedVideo ? "Se enviara como video." : "Se enviara con el mensaje como pie de foto."}
+                {selectedAudio
+                  ? "Se enviara como audio."
+                  : selectedVideo
+                    ? "Se enviara como video."
+                    : selectedDocument
+                      ? "Se enviara como documento."
+                      : "Se enviara con el mensaje como pie de foto."}
               </p>
             </div>
             <button
@@ -441,6 +466,7 @@ export function ConversationPanel({
                 setSelectedImage(null);
                 setSelectedAudio(null);
                 setSelectedVideo(null);
+                setSelectedDocument(null);
               }}
               type="button"
             >
@@ -532,6 +558,13 @@ export function ConversationPanel({
               onChange={(event) => pickVideo(event.target.files?.[0])}
               type="file"
             />
+            <input
+              ref={documentInputRef}
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/zip"
+              className="hidden"
+              onChange={(event) => pickDocument(event.target.files?.[0])}
+              type="file"
+            />
             <button
               className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
               onClick={() => imageInputRef.current?.click()}
@@ -552,6 +585,13 @@ export function ConversationPanel({
               type="button"
             >
               Video
+            </button>
+            <button
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              onClick={() => documentInputRef.current?.click()}
+              type="button"
+            >
+              Archivo
             </button>
             <textarea
               className="flex-1 resize-none rounded-[24px] border border-zinc-300 px-5 py-3 text-sm leading-relaxed outline-none transition-[height] focus:border-emerald-500"

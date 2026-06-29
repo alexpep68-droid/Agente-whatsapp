@@ -29,6 +29,7 @@ function messageTextWithLinks(text: string) {
 function isAutomaticMediaLabel(message: Message) {
   const text = message.content.trim();
   if (!message.media_url) return false;
+  if (/^\[Documento (recibido|enviado)(: .*)?\]$/.test(text)) return true;
   return [
     "[Imagen recibida]",
     "[Imagen enviada]",
@@ -37,6 +38,16 @@ function isAutomaticMediaLabel(message: Message) {
     "[Video recibido]",
     "[Video enviado]",
   ].includes(text);
+}
+
+function documentName(message: Message) {
+  const match = message.content.trim().match(/^\[Documento (?:recibido|enviado): (.+)\]$/);
+  if (match?.[1]) return match[1];
+  try {
+    return decodeURIComponent(new URL(message.media_url || "").pathname.split("/").pop() || "Documento");
+  } catch {
+    return "Documento";
+  }
 }
 
 function formatAudioTime(seconds: number) {
@@ -149,7 +160,29 @@ export function MessageBubble({ message }: { message: Message }) {
         {message.media_url && message.media_type === "audio" ? (
           <AudioPlayer src={message.media_url} />
         ) : null}
-        {message.media_url && !["image", "video", "audio"].includes(message.media_type || "") ? (
+        {message.media_url && message.media_type === "document" ? (
+          <div className="mb-2 rounded-md border border-zinc-300 bg-white/80 p-3">
+            <p className="truncate text-sm font-semibold text-zinc-900">{documentName(message)}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a
+                className="rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                href={message.media_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Abrir
+              </a>
+              <a
+                className="rounded-full border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+                download
+                href={message.media_url}
+              >
+                Descargar
+              </a>
+            </div>
+          </div>
+        ) : null}
+        {message.media_url && !["image", "video", "audio", "document"].includes(message.media_type || "") ? (
           <a
             className="mb-2 block rounded border border-zinc-300 bg-white/70 px-3 py-2 text-sm font-semibold text-emerald-800"
             href={message.media_url}
