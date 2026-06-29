@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import makeWASocket, {
   Browsers,
@@ -21,6 +22,7 @@ export interface BotHandle {
 const logger = pino({ level: "silent" });
 
 function authDirFor(account: Account) {
+  if (process.env.VERCEL) return path.join(os.tmpdir(), "agente-whatsapp-auth", account.slug);
   return path.resolve(process.cwd(), "auth", account.slug);
 }
 

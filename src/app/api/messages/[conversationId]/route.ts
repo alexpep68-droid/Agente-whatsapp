@@ -21,6 +21,10 @@ function imageExtension(file: File) {
 }
 
 async function saveOutgoingImage(conversationId: number, file: File) {
+  if (process.env.VERCEL) {
+    throw new Error("El envio de imagenes en linea requiere activar almacenamiento online.");
+  }
+
   if (!file.type.startsWith("image/")) {
     throw new Error("Solo se permiten imagenes");
   }

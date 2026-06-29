@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { DEFAULT_SYSTEM_PROMPT } from "./system-prompt";
@@ -172,7 +173,9 @@ let dbInstance: Database.Database | null = null;
 function getDb() {
   if (dbInstance) return dbInstance;
 
-  const dataDir = path.resolve(process.cwd(), "data");
+  const dataDir = process.env.VERCEL
+    ? path.join(os.tmpdir(), "agente-whatsapp-data")
+    : path.resolve(process.cwd(), "data");
   fs.mkdirSync(dataDir, { recursive: true });
 
   const db = new Database(path.join(dataDir, "messages.db"));

@@ -99,6 +99,7 @@ function extensionForMime(mime: string, fileName?: string) {
 async function saveMediaAttachment(accountId: number, sock: WASocket, msg: proto.IWebMessageInfo) {
   const info = mediaInfo(msg.message);
   if (!info) return null;
+  if (process.env.VERCEL) return null;
 
   try {
     const buffer = await downloadMediaMessage(
