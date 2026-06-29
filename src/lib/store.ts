@@ -214,7 +214,7 @@ export async function getOrCreateConversation(accountId: number, phone: string, 
     .maybeSingle();
   if (error) fail(error, "No se pudo leer la conversacion");
   if (found) {
-    if (name && !found.name) {
+    if (name && found.name !== name) {
       const { data, error: updateError } = await client
         .from("conversations")
         .update({ name })

@@ -433,7 +433,7 @@ export function getOrCreateConversation(accountId: number, phone: string, name?:
     .prepare("SELECT * FROM conversations WHERE account_id = ? AND phone = ?")
     .get(accountId, phone) as Conversation | undefined;
   if (found) {
-    if (name && !found.name) {
+    if (name && found.name !== name) {
       db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(name, found.id);
       return getConversationById(found.id)!;
     }

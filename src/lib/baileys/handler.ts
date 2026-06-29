@@ -222,7 +222,7 @@ export async function handleIncomingMessage(
   const role = msg.key.fromMe ? "human" : "user";
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
-  const convo = await getOrCreateConversation(accountId, phone, msg.pushName ?? undefined);
+  const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined);
   await insertMessage(convo.id, role, text, attachment);
 
   if (msg.key.fromMe) return;
