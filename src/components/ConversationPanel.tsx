@@ -96,7 +96,7 @@ export function ConversationPanel({
   }, [conversation]);
 
   useEffect(() => {
-    if (!conversation) return;
+    if (!conversation?.id) return;
     let alive = true;
     async function loadProfile() {
       const res = await fetch(`/api/customer-profile/${conversation!.id}`);
@@ -110,7 +110,7 @@ export function ConversationPanel({
     return () => {
       alive = false;
     };
-  }, [conversation]);
+  }, [conversation?.id]);
 
   useEffect(() => {
     if (!conversation) return;
