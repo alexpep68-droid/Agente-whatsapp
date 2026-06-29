@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type { Message } from "./types";
 
 const URL_PATTERN = /(https?:\/\/[^\s]+)/g;
@@ -25,6 +26,94 @@ function messageTextWithLinks(text: string) {
   });
 }
 
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds)) return "0:00";
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${minutes}:${rest}`;
+}
+
+function AudioPlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [src]);
+
+  async function togglePlayback() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      await audio.play();
+      setPlaying(true);
+      return;
+    }
+    audio.pause();
+    setPlaying(false);
+  }
+
+  function seek(value: string) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const nextTime = Number(value);
+    audio.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  }
+
+  return (
+    <div className="mb-2 min-w-64 rounded-full border border-black/10 bg-white/75 px-3 py-2 shadow-sm">
+      <audio
+        ref={audioRef}
+        src={src}
+        onDurationChange={(event) => setDuration(event.currentTarget.duration || 0)}
+        onEnded={() => setPlaying(false)}
+        onPause={() => setPlaying(false)}
+        onPlay={() => setPlaying(true)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+      />
+      <div className="flex items-center gap-3">
+        <button
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-600 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"
+          onClick={togglePlayback}
+          type="button"
+        >
+          {playing ? "II" : "Play"}
+        </button>
+        <div className="min-w-0 flex-1">
+          <input
+            aria-label="Avance del audio"
+            className="h-2 w-full cursor-pointer accent-emerald-600"
+            max={duration || 0}
+            min={0}
+            onChange={(event) => seek(event.target.value)}
+            step="0.1"
+            type="range"
+            value={duration ? currentTime : 0}
+          />
+          <div className="mt-1 flex justify-between text-[11px] text-zinc-500">
+            <span>{formatAudioTime(currentTime)}</span>
+            <span>{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+        <a
+          className="shrink-0 rounded-full border border-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+          download
+          href={src}
+        >
+          Descargar
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: { message: Message }) {
   const outgoing = message.role !== "user";
   const color = message.role === "assistant" ? "bg-emerald-100" : message.role === "human" ? "bg-amber-100" : "bg-white";
@@ -44,7 +133,7 @@ export function MessageBubble({ message }: { message: Message }) {
           <video className="mb-2 max-h-80 w-full rounded" controls src={message.media_url} />
         ) : null}
         {message.media_url && message.media_type === "audio" ? (
-          <audio className="mb-2 w-full" controls src={message.media_url} />
+          <AudioPlayer src={message.media_url} />
         ) : null}
         {message.media_url && !["image", "video", "audio"].includes(message.media_type || "") ? (
           <a
