@@ -57,16 +57,10 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
-function quoteMessage(project: string, total: number, url: string) {
-  const advance = total * 0.6;
-  const settlement = total * 0.4;
+function quoteMessage(project: string, url: string) {
   return `Estimado(a) cliente:
 
 Le compartimos la cotizacion correspondiente a su proyecto: ${project}.
-
-Total: $${total.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN
-Anticipo 60%: $${advance.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN
-Liquidacion 40%: $${settlement.toLocaleString("es-MX", { minimumFractionDigits: 2 })} MXN
 
 PDF:
 ${url}
@@ -170,7 +164,7 @@ export async function POST(req: NextRequest) {
     const messageId = await insertMessage(conversation.id, "human", content, media);
     await enqueueOutbox(conversation.account_id, conversation.id, conversation.phone, content, media);
 
-    const message = clean(body?.message) || quoteMessage(project, total, pdfUrl);
+    const message = clean(body?.message) || quoteMessage(project, pdfUrl);
 
     return NextResponse.json({
       ok: true,
