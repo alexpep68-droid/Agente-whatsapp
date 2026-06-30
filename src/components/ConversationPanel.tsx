@@ -51,6 +51,7 @@ export function ConversationPanel({
   const [showLabels, setShowLabels] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showQuote, setShowQuote] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -74,6 +75,7 @@ export function ConversationPanel({
   const audioInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const quoteInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabels(parseLabels(conversation?.label));
@@ -248,6 +250,20 @@ export function ConversationPanel({
     setSelectedVideo(null);
   }
 
+  function prepareQuoteMessage() {
+    setDraft(`Estimado(a) cliente:
+
+Es un placer para nosotros presentarle la cotización correspondiente a su proyecto solicitado.
+
+En esta propuesta encontrará los detalles, características y alcances de nuestro trabajo, elaborados con el compromiso y la calidad que distinguen a Almalu.
+
+Quedamos atentos a cualquier duda, ajuste o información adicional que requiera.
+
+Atentamente,
+ALMALU`);
+    setShowQuote(false);
+  }
+
   function insertQuickReply(text: string) {
     setDraft(text);
     setShowQuickReplies(false);
@@ -420,6 +436,13 @@ export function ConversationPanel({
           </button>
           <button
             className="h-10 rounded-full border border-emerald-200 px-4 text-sm font-semibold text-emerald-800"
+            onClick={() => setShowQuote(true)}
+            type="button"
+          >
+            Cotización
+          </button>
+          <button
+            className="h-10 rounded-full border border-emerald-200 px-4 text-sm font-semibold text-emerald-800"
             onClick={() => {
               setPaymentError("");
               setShowPayment(true);
@@ -470,6 +493,17 @@ export function ConversationPanel({
         ))}
         <div ref={bottomRef} />
       </div>
+
+      <input
+        ref={quoteInputRef}
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={(event) => {
+          pickDocument(event.target.files?.[0]);
+          setShowQuote(false);
+        }}
+        type="file"
+      />
 
       <footer className="border-t border-zinc-200 bg-white p-4">
         {(selectedImage && selectedImagePreview) || selectedAudio || (selectedVideo && selectedVideoPreview) || selectedDocument ? (
@@ -838,6 +872,43 @@ export function ConversationPanel({
                 type="button"
               >
                 Guardar ficha
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showQuote ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="w-full max-w-lg rounded-md bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold">Cotización</h2>
+                <p className="text-sm text-zinc-500">Prepara o adjunta una cotización para {title}.</p>
+              </div>
+              <button
+                className="h-9 rounded border border-zinc-300 px-3 text-sm font-semibold"
+                onClick={() => setShowQuote(false)}
+                type="button"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3">
+              <button
+                className="rounded-md border border-emerald-200 p-4 text-left hover:bg-emerald-50"
+                onClick={() => quoteInputRef.current?.click()}
+                type="button"
+              >
+                <p className="font-semibold text-emerald-800">Adjuntar PDF de cotización</p>
+                <p className="mt-1 text-sm text-zinc-500">Selecciona el archivo PDF y luego presiona Enviar en el chat.</p>
+              </button>
+              <button
+                className="rounded-md border border-zinc-200 p-4 text-left hover:bg-zinc-50"
+                onClick={prepareQuoteMessage}
+                type="button"
+              >
+                <p className="font-semibold">Preparar mensaje de cotización</p>
+                <p className="mt-1 text-sm text-zinc-500">Inserta un texto formal para revisarlo antes de enviarlo.</p>
               </button>
             </div>
           </div>
