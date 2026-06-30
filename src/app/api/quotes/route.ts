@@ -119,11 +119,16 @@ export async function POST(req: NextRequest) {
     }
 
     const pdfUrl = await uploadMedia(`quotes/${conversationId}/${pdfName}`, pdf, "application/pdf");
-    const jsonUrl = await uploadMedia(
-      `quotes/${conversationId}/${jsonName}`,
-      Buffer.from(JSON.stringify(quoteData, null, 2), "utf-8"),
-      "text/plain",
-    );
+    let jsonUrl: string | null = null;
+    try {
+      jsonUrl = await uploadMedia(
+        `quotes/${conversationId}/${jsonName}`,
+        Buffer.from(JSON.stringify(quoteData, null, 2), "utf-8"),
+        "text/plain",
+      );
+    } catch (err) {
+      console.warn("No se pudo guardar el JSON editable de la cotizacion", err);
+    }
     if (!pdfUrl) return NextResponse.json({ error: "No se pudo guardar el PDF" }, { status: 500 });
 
     const media = { url: pdfUrl, type: "document" };
