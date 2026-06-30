@@ -57,13 +57,12 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
-function quoteMessage(project: string, url: string) {
+function quoteMessage(project: string) {
   return `Estimado(a) cliente:
 
 Le compartimos la cotizacion correspondiente a su proyecto: ${project}.
 
-PDF:
-${url}
+Te adjunto tu cotizacion en PDF para que puedas revisarla.
 
 Quedamos atentos a cualquier duda o ajuste.
 
@@ -164,7 +163,7 @@ export async function POST(req: NextRequest) {
     const messageId = await insertMessage(conversation.id, "human", content, media);
     await enqueueOutbox(conversation.account_id, conversation.id, conversation.phone, content, media);
 
-    const message = clean(body?.message) || quoteMessage(project, pdfUrl);
+    const message = clean(body?.message) || quoteMessage(project);
 
     return NextResponse.json({
       ok: true,
