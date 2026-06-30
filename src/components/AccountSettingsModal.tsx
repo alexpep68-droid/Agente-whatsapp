@@ -121,13 +121,16 @@ export function AccountSettingsModal({
   const [name, setName] = useState(account.name);
   const [enabled, setEnabled] = useState(Boolean(account.ai_enabled));
   const [prompt, setPrompt] = useState(account.system_prompt);
+  const [editingPrompt, setEditingPrompt] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isAlmaluAccount = /almal[uú]/i.test(account.name);
 
   useEffect(() => {
     setName(account.name);
     setEnabled(Boolean(account.ai_enabled));
     setPrompt(account.system_prompt);
+    setEditingPrompt(false);
     setError(null);
   }, [account]);
 
@@ -220,19 +223,39 @@ export function AccountSettingsModal({
               <label className="block">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-sm font-semibold text-zinc-700">Prompt del negocio</span>
-                  <button
-                    className="rounded border border-emerald-200 px-3 py-1 text-sm font-semibold text-emerald-700"
-                    onClick={() => setPrompt(ALMALU_PROMPT)}
-                    type="button"
-                  >
-                    Usar plantilla ALMALU
-                  </button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {isAlmaluAccount ? (
+                      <button
+                        className="rounded border border-emerald-200 px-3 py-1 text-sm font-semibold text-emerald-700"
+                        onClick={() => {
+                          setPrompt(ALMALU_PROMPT);
+                          setEditingPrompt(true);
+                        }}
+                        type="button"
+                      >
+                        Usar plantilla ALMALU
+                      </button>
+                    ) : null}
+                    <button
+                      className="rounded border border-zinc-300 px-3 py-1 text-sm font-semibold text-zinc-700"
+                      onClick={() => setEditingPrompt((value) => !value)}
+                      type="button"
+                    >
+                      {editingPrompt ? "Vista previa" : "Configurar"}
+                    </button>
+                  </div>
                 </div>
-                <textarea
-                  className="mt-2 min-h-[420px] w-full resize-y rounded border border-zinc-300 p-3 text-sm leading-6 outline-none focus:border-emerald-500"
-                  onChange={(event) => setPrompt(event.target.value)}
-                  value={prompt}
-                />
+                {editingPrompt ? (
+                  <textarea
+                    className="mt-2 min-h-[420px] w-full resize-y rounded border border-zinc-300 p-3 text-sm leading-6 outline-none focus:border-emerald-500"
+                    onChange={(event) => setPrompt(event.target.value)}
+                    value={prompt}
+                  />
+                ) : (
+                  <div className="mt-2 min-h-[220px] whitespace-pre-wrap rounded border border-zinc-200 bg-zinc-50 p-3 text-sm leading-6 text-zinc-700">
+                    {prompt || "Esta cuenta todavia no tiene un prompt configurado. Presiona Configurar para agregar sus reglas."}
+                  </div>
+                )}
               </label>
 
               {error ? <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
