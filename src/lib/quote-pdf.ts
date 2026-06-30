@@ -10,6 +10,11 @@ export interface AlmaluQuoteInput {
   measurements?: string;
   design?: string;
   notes?: string;
+  referenceImage?: {
+    data: Buffer;
+    width: number;
+    height: number;
+  };
   items: QuoteItem[];
   total: number;
   dateText: string;
@@ -58,6 +63,7 @@ function wrap(text: string, maxChars: number) {
 
 class PdfPage {
   ops: string[] = [];
+  xobjects = new Set<string>();
 
   text(text: string, x: number, y: number, size = 10, font = "F1", color = "0.2 0.2 0.2") {
     this.ops.push(`BT /${font} ${size} Tf ${color} rg 1 0 0 1 ${x} ${y} Tm (${pdfText(text)}) Tj ET`);
@@ -73,6 +79,11 @@ class PdfPage {
 
   fillRect(x: number, y: number, w: number, h: number, fill: string) {
     this.ops.push(`${fill} rg ${x} ${y} ${w} ${h} re f`);
+  }
+
+  image(name: string, x: number, y: number, w: number, h: number) {
+    this.xobjects.add(name);
+    this.ops.push(`q ${w} 0 0 ${h} ${x} ${y} cm /${name} Do Q`);
   }
 }
 
@@ -144,6 +155,25 @@ class QuotePdf {
       if (index < specs.length - 1) this.page.line(LEFT + 12, rowY + 10, PAGE_W - RIGHT - 12, rowY + 10);
     });
     this.y -= height + 18;
+  }
+
+  referenceImage() {
+    if (!this.data.referenceImage) return;
+    this.section("IMAGEN DE REFERENCIA");
+    const image = this.data.referenceImage;
+    const maxW = 360;
+    const maxH = 220;
+    const ratio = Math.min(maxW / image.width, maxH / image.height);
+    const drawW = Math.round(image.width * ratio);
+    const drawH = Math.round(image.height * ratio);
+    const boxW = drawW + 24;
+    const boxH = drawH + 24;
+    this.ensure(boxH + 20);
+    const x = LEFT + (CONTENT_W - boxW) / 2;
+    const y = this.y - boxH;
+    this.page.rect(x, y, boxW, boxH, "1 1 1");
+    this.page.image("ImRef", x + 12, y + 12, drawW, drawH);
+    this.y -= boxH + 20;
   }
 
   concepts() {
@@ -225,17 +255,22 @@ class QuotePdf {
     this.header();
     this.section("ESPECIFICACIONES DEL ESPACIO Y DISENO");
     this.specs();
+    this.referenceImage();
     this.concepts();
     this.payments();
     this.notes();
     this.footer();
-    return buildPdf(this.pages.map((page) => page.ops.join("\n")));
+    return buildPdf(this.pages, this.data.referenceImage);
   }
 }
 
-function buildPdf(pageContents: string[]) {
-  const objects: string[] = [];
-  const add = (value: string) => {
+function buildPdf(pages: PdfPage[], referenceImage?: AlmaluQuoteInput["referenceImage"]) {
+  const objects: Array<string | Buffer> = [];
+  const add = (value: string | Buffer) => {
+    if (Buffer.isBuffer(value)) {
+      objects.push(value);
+      return objects.length;
+    }
     objects.push(value);
     return objects.length;
   };
@@ -245,13 +280,27 @@ function buildPdf(pageContents: string[]) {
   add("");
   const fontRegularId = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
   const fontBoldId = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  const imageId = referenceImage
+    ? add(
+        Buffer.concat([
+          Buffer.from(
+            `<< /Type /XObject /Subtype /Image /Width ${referenceImage.width} /Height ${referenceImage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${referenceImage.data.length} >>\nstream\n`,
+            "ascii",
+          ),
+          referenceImage.data,
+          Buffer.from("\nendstream", "ascii"),
+        ]),
+      )
+    : null;
   const pageIds: number[] = [];
   const contentIds: number[] = [];
 
-  for (const content of pageContents) {
+  for (const page of pages) {
+    const content = page.ops.join("\n");
     const contentId = add(`<< /Length ${Buffer.byteLength(content, "ascii")} >>\nstream\n${content}\nendstream`);
+    const xobjectResources = imageId && page.xobjects.has("ImRef") ? ` /XObject << /ImRef ${imageId} 0 R >>` : "";
     const pageId = add(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentId} 0 R >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >>${xobjectResources} >> /Contents ${contentId} 0 R >>`,
     );
     contentIds.push(contentId);
     pageIds.push(pageId);
@@ -259,19 +308,41 @@ function buildPdf(pageContents: string[]) {
   void contentIds;
   objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
 
-  let pdf = "%PDF-1.4\n";
+  const chunks: Buffer[] = [Buffer.from("%PDF-1.4\n", "ascii")];
   const offsets = [0];
   objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, "ascii"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    offsets.push(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+    chunks.push(Buffer.from(`${index + 1} 0 obj\n`, "ascii"));
+    chunks.push(Buffer.isBuffer(object) ? object : Buffer.from(object, "ascii"));
+    chunks.push(Buffer.from("\nendobj\n", "ascii"));
   });
-  const xref = Buffer.byteLength(pdf, "ascii");
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  const xref = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  chunks.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`, "ascii"));
   for (let i = 1; i <= objects.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+    chunks.push(Buffer.from(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`, "ascii"));
   }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(pdf, "ascii");
+  chunks.push(Buffer.from(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`, "ascii"));
+  return Buffer.concat(chunks);
+}
+
+export function readJpegSize(buffer: Buffer) {
+  if (buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    throw new Error("La imagen de referencia debe ser JPG o JPEG");
+  }
+  let offset = 2;
+  while (offset < buffer.length) {
+    if (buffer[offset] !== 0xff) break;
+    const marker = buffer[offset + 1];
+    const length = buffer.readUInt16BE(offset + 2);
+    if ([0xc0, 0xc1, 0xc2, 0xc3].includes(marker)) {
+      return {
+        height: buffer.readUInt16BE(offset + 5),
+        width: buffer.readUInt16BE(offset + 7),
+      };
+    }
+    offset += 2 + length;
+  }
+  throw new Error("No se pudo leer el tamaño de la imagen JPG");
 }
 
 export function generateAlmaluQuotePdf(data: AlmaluQuoteInput) {

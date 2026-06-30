@@ -72,6 +72,8 @@ export function ConversationPanel({
   });
   const [quoteError, setQuoteError] = useState("");
   const [creatingQuote, setCreatingQuote] = useState(false);
+  const [quoteImage, setQuoteImage] = useState<File | null>(null);
+  const [quoteImagePreview, setQuoteImagePreview] = useState<string | null>(null);
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
@@ -87,6 +89,7 @@ export function ConversationPanel({
   const videoInputRef = useRef<HTMLInputElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
   const quoteInputRef = useRef<HTMLInputElement>(null);
+  const quoteImageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabels(parseLabels(conversation?.label));
@@ -107,6 +110,16 @@ export function ConversationPanel({
     setSelectedImagePreview(url);
     return () => URL.revokeObjectURL(url);
   }, [selectedImage]);
+
+  useEffect(() => {
+    if (!quoteImage) {
+      setQuoteImagePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(quoteImage);
+    setQuoteImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [quoteImage]);
 
   useEffect(() => {
     if (!selectedVideo) {
@@ -390,19 +403,19 @@ ALMALU`);
     if (!conversation || creatingQuote) return;
     setQuoteError("");
     setCreatingQuote(true);
+    const formData = new FormData();
+    formData.set("conversationId", String(conversation.id));
+    formData.set("client", quoteDraft.client);
+    formData.set("project", quoteDraft.project);
+    formData.set("measurements", quoteDraft.measurements);
+    formData.set("design", quoteDraft.design);
+    formData.set("itemsText", quoteDraft.itemsText);
+    formData.set("notes", quoteDraft.notes);
+    formData.set("total", quoteDraft.total.replace(/[$,\s]/g, ""));
+    if (quoteImage) formData.set("referenceImage", quoteImage);
     const res = await fetch("/api/quotes", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId: conversation.id,
-        client: quoteDraft.client,
-        project: quoteDraft.project,
-        measurements: quoteDraft.measurements,
-        design: quoteDraft.design,
-        itemsText: quoteDraft.itemsText,
-        notes: quoteDraft.notes,
-        total: Number(quoteDraft.total.replace(/[$,\s]/g, "")),
-      }),
+      body: formData,
     });
     const json = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
     setCreatingQuote(false);
@@ -411,6 +424,7 @@ ALMALU`);
       return;
     }
     if (json?.message) setDraft(json.message);
+    setQuoteImage(null);
     setShowQuote(false);
     onChanged();
   }
@@ -487,6 +501,7 @@ ALMALU`);
                 total: "",
                 notes: "Accesorios, electrodomesticos y trabajos no mencionados se cotizan por separado.",
               });
+              setQuoteImage(null);
               setShowQuote(true);
             }}
             type="button"
@@ -990,6 +1005,50 @@ ALMALU`);
                   value={quoteDraft.design}
                 />
               </label>
+              <div className="md:col-span-2">
+                <input
+                  ref={quoteImageInputRef}
+                  accept="image/jpeg,image/jpg"
+                  className="hidden"
+                  onChange={(event) => setQuoteImage(event.target.files?.[0] || null)}
+                  type="file"
+                />
+                <div className="rounded-md border border-zinc-200 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">Imagen de referencia</p>
+                      <p className="text-sm text-zinc-500">Se insertará dentro del PDF. Usa imagen JPG o JPEG.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {quoteImage ? (
+                        <button
+                          className="h-10 rounded border border-zinc-300 px-4 text-sm font-semibold"
+                          onClick={() => setQuoteImage(null)}
+                          type="button"
+                        >
+                          Quitar
+                        </button>
+                      ) : null}
+                      <button
+                        className="h-10 rounded border border-emerald-300 px-4 text-sm font-semibold text-emerald-800"
+                        onClick={() => quoteImageInputRef.current?.click()}
+                        type="button"
+                      >
+                        Seleccionar imagen
+                      </button>
+                    </div>
+                  </div>
+                  {quoteImage && quoteImagePreview ? (
+                    <div className="mt-3 flex items-center gap-3 rounded bg-emerald-50 p-3">
+                      <img alt="Referencia de cotización" className="h-24 w-24 rounded object-cover" src={quoteImagePreview} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-emerald-900">{quoteImage.name}</p>
+                        <p className="text-xs text-emerald-700">Lista para incluirse en la cotización.</p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
               <label className="block text-sm font-semibold md:col-span-2">
                 Conceptos incluidos
                 <textarea

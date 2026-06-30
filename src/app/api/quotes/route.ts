@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { enqueueOutbox, getConversationById, insertMessage } from "@/lib/store";
 import { hasOnlineStorage, uploadMedia } from "@/lib/media-storage";
-import { generateAlmaluQuotePdf, type AlmaluQuoteInput } from "@/lib/quote-pdf";
+import { generateAlmaluQuotePdf, readJpegSize, type AlmaluQuoteInput } from "@/lib/quote-pdf";
 
 interface QuoteBody {
   conversationId?: number;
@@ -79,7 +79,36 @@ ALMALU`;
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => null)) as QuoteBody | null;
+    const contentType = req.headers.get("content-type") || "";
+    let body: QuoteBody | null = null;
+    let referenceImage: AlmaluQuoteInput["referenceImage"] | undefined;
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      const file = formData.get("referenceImage");
+      body = {
+        conversationId: Number(formData.get("conversationId")),
+        client: clean(formData.get("client")),
+        project: clean(formData.get("project")),
+        measurements: clean(formData.get("measurements")),
+        design: clean(formData.get("design")),
+        itemsText: clean(formData.get("itemsText")),
+        notes: clean(formData.get("notes")),
+        total: Number(formData.get("total")),
+      };
+      if (file instanceof File && file.size > 0) {
+        if (!["image/jpeg", "image/jpg"].includes(file.type.toLowerCase())) {
+          return NextResponse.json({ error: "La imagen de referencia debe ser JPG o JPEG" }, { status: 400 });
+        }
+        if (file.size > 8 * 1024 * 1024) {
+          return NextResponse.json({ error: "La imagen de referencia no debe pasar de 8 MB" }, { status: 400 });
+        }
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const size = readJpegSize(buffer);
+        referenceImage = { data: buffer, ...size };
+      }
+    } else {
+      body = (await req.json().catch(() => null)) as QuoteBody | null;
+    }
     const conversationId = Number(body?.conversationId);
     if (!conversationId) return NextResponse.json({ error: "Conversacion no encontrada" }, { status: 400 });
 
@@ -103,6 +132,7 @@ export async function POST(req: NextRequest) {
       measurements: clean(body?.measurements),
       design: clean(body?.design),
       notes: clean(body?.notes),
+      referenceImage,
       items,
       total,
       dateText: formatDate(now),
@@ -121,9 +151,13 @@ export async function POST(req: NextRequest) {
     const pdfUrl = await uploadMedia(`quotes/${conversationId}/${pdfName}`, pdf, "application/pdf");
     let jsonUrl: string | null = null;
     try {
+      const editableData = {
+        ...quoteData,
+        referenceImage: referenceImage ? { included: true, width: referenceImage.width, height: referenceImage.height } : undefined,
+      };
       jsonUrl = await uploadMedia(
         `quotes/${conversationId}/${jsonName}`,
-        Buffer.from(JSON.stringify(quoteData, null, 2), "utf-8"),
+        Buffer.from(JSON.stringify(editableData, null, 2), "utf-8"),
         "text/plain",
       );
     } catch (err) {
