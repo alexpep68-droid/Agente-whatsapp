@@ -5,6 +5,14 @@ import { CHAT_LABELS, labelColor, parseLabels } from "./labels";
 import { PIPELINE_STAGES, pipelineStageColor } from "./pipeline";
 import type { Conversation, PipelineStage } from "./types";
 
+function normalizeSearch(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 function initials(value: string) {
   return value.trim().slice(0, 1).toUpperCase() || "?";
 }
@@ -33,9 +41,11 @@ export function ConversationList({
   onSelect: (conversation: Conversation) => void;
 }) {
   const [filter, setFilter] = useState<"all" | "favorites" | "groups">("all");
+  const [search, setSearch] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
   const [stageFilter, setStageFilter] = useState<PipelineStage | "">("");
   const filtered = useMemo(() => {
+    const searchTerm = normalizeSearch(search);
     let byMainFilter =
       filter === "favorites"
         ? conversations.filter((conversation) => parseLabels(conversation.label).includes("Cliente potencial"))
@@ -46,25 +56,62 @@ export function ConversationList({
       byMainFilter = byMainFilter.filter((conversation) => conversation.pipeline_stage === stageFilter);
     }
     if (labelFilter) {
-      return byMainFilter.filter((conversation) => parseLabels(conversation.label).includes(labelFilter));
+      byMainFilter = byMainFilter.filter((conversation) => parseLabels(conversation.label).includes(labelFilter));
+    }
+    if (searchTerm) {
+      byMainFilter = byMainFilter.filter((conversation) => {
+        const haystack = normalizeSearch(
+          [
+            conversation.name,
+            chatLabel(conversation.phone),
+            conversation.phone,
+            conversation.last_message_preview,
+            conversation.pipeline_stage,
+            conversation.mode,
+            conversation.label,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+        return haystack.includes(searchTerm);
+      });
     }
     return byMainFilter;
-  }, [conversations, filter, labelFilter, stageFilter]);
+  }, [conversations, filter, labelFilter, search, stageFilter]);
 
   const emptyText = useMemo(() => {
+    if (search.trim()) return `No encontre chats que coincidan con "${search.trim()}".`;
     if (stageFilter) return `No hay chats en la etapa ${stageFilter}.`;
     if (labelFilter) return `No hay chats con la etiqueta ${labelFilter}.`;
     if (filter === "favorites") {
       return "Marca una conversacion como Cliente potencial para verla aqui.";
     }
     return "Los grupos estan fuera del alcance de esta version inicial.";
-  }, [filter, labelFilter, stageFilter]);
+  }, [filter, labelFilter, search, stageFilter]);
 
   return (
     <aside className="flex h-full w-[360px] shrink-0 flex-col border-r border-zinc-200 bg-white">
       <div className="border-b border-zinc-200 p-4">
         <h1 className="text-2xl font-bold text-emerald-700">WhatsApp</h1>
-        <div className="mt-4 rounded-full bg-zinc-100 px-4 py-2 text-sm text-zinc-500">Buscar un chat o iniciar uno nuevo</div>
+        <div className="relative mt-4">
+          <input
+            className="h-10 w-full rounded-full bg-zinc-100 px-4 pr-10 text-sm text-zinc-800 outline-none placeholder:text-zinc-500 focus:ring-2 focus:ring-emerald-200"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Buscar por nombre, telefono o mensaje"
+            type="search"
+            value={search}
+          />
+          {search ? (
+            <button
+              aria-label="Limpiar busqueda"
+              className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-zinc-500 hover:bg-white hover:text-zinc-800"
+              onClick={() => setSearch("")}
+              type="button"
+            >
+              x
+            </button>
+          ) : null}
+        </div>
         <div className="mt-3 flex gap-2">
           <button
             className={`rounded-full border px-3 py-1 text-sm ${
