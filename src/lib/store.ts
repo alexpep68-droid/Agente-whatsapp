@@ -349,6 +349,32 @@ export async function deleteMessageByRemoteId(accountId: number, remoteId: strin
   }
 }
 
+export async function deleteMessages(conversationId: number, messageIds: number[]) {
+  const ids = Array.from(new Set(messageIds.map(Number).filter(Number.isFinite)));
+  if (ids.length === 0) return;
+  const client = await clientReady();
+  if (!client) return sqlite.deleteMessages(conversationId, ids);
+
+  const { error } = await client.from("messages").delete().eq("conversation_id", conversationId).in("id", ids);
+  if (error) fail(error, "No se pudieron borrar los mensajes seleccionados");
+
+  const { data: latest, error: latestError } = await client
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestError) fail(latestError, "No se pudo actualizar la conversacion");
+
+  const { error: updateError } = await client
+    .from("conversations")
+    .update({ last_message_at: latest?.created_at ?? null })
+    .eq("id", conversationId);
+  if (updateError) fail(updateError, "No se pudo actualizar la conversacion");
+}
+
 export async function getMessages(conversationId: number, limit = 80): Promise<Message[]> {
   const client = await clientReady();
   if (!client) return sqlite.getMessages(conversationId, limit);

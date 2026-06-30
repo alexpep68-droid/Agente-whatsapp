@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { enqueueOutbox, getConversationById, getMessages, insertMessage } from "@/lib/store";
+import { deleteMessages, enqueueOutbox, getConversationById, getMessages, insertMessage } from "@/lib/store";
 import { hasOnlineStorage, uploadMedia } from "@/lib/media-storage";
 
 interface Ctx {
@@ -115,4 +115,19 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const messageId = await insertMessage(convo.id, "human", content);
   await enqueueOutbox(convo.account_id, convo.id, convo.phone, content);
   return NextResponse.json({ ok: true, messageId });
+}
+
+export async function DELETE(req: NextRequest, { params }: Ctx) {
+  const { conversationId } = await params;
+  const convo = await getConversationById(Number(conversationId));
+  if (!convo) return NextResponse.json({ error: "Conversacion no encontrada" }, { status: 404 });
+
+  const body = (await req.json().catch(() => null)) as { messageIds?: number[] } | null;
+  const messageIds = Array.from(new Set((body?.messageIds || []).map(Number).filter(Number.isFinite)));
+  if (messageIds.length === 0) {
+    return NextResponse.json({ error: "Selecciona al menos un mensaje" }, { status: 400 });
+  }
+
+  await deleteMessages(convo.id, messageIds);
+  return NextResponse.json({ ok: true });
 }

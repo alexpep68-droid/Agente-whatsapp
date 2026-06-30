@@ -75,12 +75,16 @@ export function ConversationPanel({
   const [quoteImage, setQuoteImage] = useState<File | null>(null);
   const [quoteImagePreview, setQuoteImagePreview] = useState<string | null>(null);
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<File | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
-  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
   const [selectedVideoPreview, setSelectedVideoPreview] = useState<string | null>(null);
+  const [selectingMessages, setSelectingMessages] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<number[]>([]);
+  const [sendError, setSendError] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -95,21 +99,20 @@ export function ConversationPanel({
     setLabels(parseLabels(conversation?.label));
     setPipelineStageState(conversation?.pipeline_stage || "Nuevo cliente");
     setShowLabels(false);
-    setSelectedImage(null);
+    setSelectedImages([]);
     setSelectedAudio(null);
     setSelectedVideo(null);
     setSelectedDocument(null);
+    setSelectingMessages(false);
+    setSelectedMessageIds([]);
+    setSendError("");
   }, [conversation?.id, conversation?.label, conversation?.pipeline_stage]);
 
   useEffect(() => {
-    if (!selectedImage) {
-      setSelectedImagePreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(selectedImage);
-    setSelectedImagePreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [selectedImage]);
+    const urls = selectedImages.map((file) => URL.createObjectURL(file));
+    setSelectedImagePreviews(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [selectedImages]);
 
   useEffect(() => {
     if (!quoteImage) {
@@ -212,39 +215,58 @@ export function ConversationPanel({
   }
 
   async function sendMessage(contentOverride?: string) {
-    if (!conversation) return;
+    if (!conversation || sendingMessage) return;
     const content = (contentOverride ?? draft).trim();
-    const media = contentOverride ? null : selectedImage || selectedAudio || selectedVideo || selectedDocument;
-    if (!content && !media) return;
-    if (!contentOverride) {
-      setDraft("");
-      setSelectedImage(null);
-      setSelectedAudio(null);
-      setSelectedVideo(null);
-      setSelectedDocument(null);
-    }
+    const mediaFiles = (contentOverride ? [] : [...selectedImages, selectedAudio, selectedVideo, selectedDocument].filter(Boolean)) as File[];
+    if (!content && mediaFiles.length === 0) return;
+    setSendError("");
+    setSendingMessage(true);
     setShowQuickReplies(false);
-    if (media) {
-      const formData = new FormData();
-      formData.set("media", media);
-      formData.set("content", content);
-      await fetch(`/api/messages/${conversation.id}`, {
-        method: "POST",
-        body: formData,
-      });
-    } else {
-      await fetch(`/api/messages/${conversation.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
+    try {
+      if (mediaFiles.length > 0) {
+        for (const [index, file] of mediaFiles.entries()) {
+          const formData = new FormData();
+          formData.set("media", file);
+          formData.set("content", index === 0 ? content : "");
+          const res = await fetch(`/api/messages/${conversation.id}`, {
+            method: "POST",
+            body: formData,
+          });
+          if (!res.ok) {
+            const json = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(json?.error || "No se pudo enviar el archivo");
+          }
+        }
+      } else {
+        const res = await fetch(`/api/messages/${conversation.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        if (!res.ok) {
+          const json = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(json?.error || "No se pudo enviar el mensaje");
+        }
+      }
+      if (!contentOverride) {
+        setDraft("");
+        setSelectedImages([]);
+        setSelectedAudio(null);
+        setSelectedVideo(null);
+        setSelectedDocument(null);
+      }
+      onChanged();
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "No se pudo enviar. Intenta de nuevo.");
+    } finally {
+      setSendingMessage(false);
     }
-    onChanged();
   }
 
-  function pickImage(file: File | undefined) {
-    if (!file) return;
-    setSelectedImage(file);
+  function pickImages(files: FileList | null | undefined) {
+    const nextImages = Array.from(files || []);
+    if (nextImages.length === 0) return;
+    setSelectedImages(nextImages);
     setSelectedAudio(null);
     setSelectedVideo(null);
     setSelectedDocument(null);
@@ -253,7 +275,7 @@ export function ConversationPanel({
   function pickAudio(file: File | undefined) {
     if (!file) return;
     setSelectedAudio(file);
-    setSelectedImage(null);
+    setSelectedImages([]);
     setSelectedVideo(null);
     setSelectedDocument(null);
   }
@@ -261,7 +283,7 @@ export function ConversationPanel({
   function pickVideo(file: File | undefined) {
     if (!file) return;
     setSelectedVideo(file);
-    setSelectedImage(null);
+    setSelectedImages([]);
     setSelectedAudio(null);
     setSelectedDocument(null);
   }
@@ -269,7 +291,7 @@ export function ConversationPanel({
   function pickDocument(file: File | undefined) {
     if (!file) return;
     setSelectedDocument(file);
-    setSelectedImage(null);
+    setSelectedImages([]);
     setSelectedAudio(null);
     setSelectedVideo(null);
   }
@@ -441,6 +463,34 @@ ALMALU`);
     onChanged();
   }
 
+  function toggleMessageSelection(messageId: number) {
+    setSelectedMessageIds((current) =>
+      current.includes(messageId) ? current.filter((id) => id !== messageId) : [...current, messageId],
+    );
+  }
+
+  function cancelMessageSelection() {
+    setSelectingMessages(false);
+    setSelectedMessageIds([]);
+  }
+
+  async function removeSelectedMessages() {
+    if (!conversation || selectedMessageIds.length === 0) return;
+    const ids = selectedMessageIds;
+    const res = await fetch(`/api/messages/${conversation.id}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageIds: ids }),
+    });
+    if (!res.ok) {
+      window.alert("No se pudieron borrar los mensajes seleccionados.");
+      return;
+    }
+    setMessages((current) => current.filter((message) => !ids.includes(message.id)));
+    cancelMessageSelection();
+    onChanged();
+  }
+
   if (!conversation) {
     return (
       <main className="grid flex-1 place-items-center bg-[#efe8dc] text-zinc-500">
@@ -548,15 +598,50 @@ ALMALU`);
             ) : null}
           </div>
           <ModeToggle mode={conversation.mode} onChange={changeMode} />
+          {selectingMessages ? (
+            <>
+              <button
+                className="h-10 rounded border border-red-200 px-3 text-sm font-semibold text-red-700 disabled:opacity-50"
+                disabled={selectedMessageIds.length === 0}
+                onClick={() => void removeSelectedMessages()}
+                type="button"
+              >
+                Borrar seleccionados {selectedMessageIds.length ? `(${selectedMessageIds.length})` : ""}
+              </button>
+              <button className="h-10 rounded border border-zinc-300 px-3 text-sm font-semibold" onClick={cancelMessageSelection} type="button">
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <button
+              className="h-10 rounded border border-zinc-300 px-3 text-sm font-semibold"
+              onClick={() => setSelectingMessages(true)}
+              type="button"
+            >
+              Seleccionar
+            </button>
+          )}
           <button className="h-10 rounded border border-red-200 px-3 text-sm font-semibold text-red-700" onClick={() => setShowDeleteConfirm(true)} type="button">
-            Borrar
+            Borrar chat
           </button>
         </div>
       </header>
 
+      {selectingMessages ? (
+        <div className="border-b border-emerald-100 bg-emerald-50 px-6 py-2 text-sm text-emerald-800">
+          Selecciona mensajes, imagenes, videos, audios o archivos para borrarlos de esta app.
+        </div>
+      ) : null}
+
       <div ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-6" onScroll={handleMessagesScroll}>
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            selectable={selectingMessages}
+            selected={selectedMessageIds.includes(message.id)}
+            onToggleSelected={toggleMessageSelection}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -573,10 +658,14 @@ ALMALU`);
       />
 
       <footer className="border-t border-zinc-200 bg-white p-4">
-        {(selectedImage && selectedImagePreview) || selectedAudio || (selectedVideo && selectedVideoPreview) || selectedDocument ? (
+        {(selectedImages.length > 0 && selectedImagePreviews.length > 0) || selectedAudio || (selectedVideo && selectedVideoPreview) || selectedDocument ? (
           <div className="mb-3 flex items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
-            {selectedImage && selectedImagePreview ? (
-              <img alt="Imagen lista para enviar" className="h-20 w-20 rounded object-cover" src={selectedImagePreview} />
+            {selectedImages.length > 0 && selectedImagePreviews.length > 0 ? (
+              <div className="flex max-w-56 gap-2 overflow-x-auto">
+                {selectedImagePreviews.map((preview, index) => (
+                  <img alt={`Imagen ${index + 1} lista para enviar`} className="h-20 w-20 shrink-0 rounded object-cover" key={preview} src={preview} />
+                ))}
+              </div>
             ) : selectedVideo && selectedVideoPreview ? (
               <video className="h-20 w-20 rounded object-cover" src={selectedVideoPreview} muted />
             ) : selectedDocument ? (
@@ -589,7 +678,11 @@ ALMALU`);
               </div>
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-emerald-900">{selectedImage?.name || selectedAudio?.name || selectedVideo?.name || selectedDocument?.name}</p>
+              <p className="truncate text-sm font-semibold text-emerald-900">
+                {selectedImages.length > 1
+                  ? `${selectedImages.length} imagenes seleccionadas`
+                  : selectedImages[0]?.name || selectedAudio?.name || selectedVideo?.name || selectedDocument?.name}
+              </p>
               <p className="text-xs text-emerald-700">
                 {selectedAudio
                   ? "Se enviara como audio."
@@ -597,13 +690,15 @@ ALMALU`);
                     ? "Se enviara como video."
                     : selectedDocument
                       ? "Se enviara como documento."
-                      : "Se enviara con el mensaje como pie de foto."}
+                      : selectedImages.length > 1
+                        ? "Se enviaran como imagenes separadas. El texto ira en la primera."
+                        : "Se enviara con el mensaje como pie de foto."}
               </p>
             </div>
             <button
               className="h-9 rounded border border-emerald-300 px-3 text-sm font-semibold text-emerald-800"
               onClick={() => {
-                setSelectedImage(null);
+                setSelectedImages([]);
                 setSelectedAudio(null);
                 setSelectedVideo(null);
                 setSelectedDocument(null);
@@ -668,6 +763,11 @@ ALMALU`);
             </div>
           </div>
         ) : null}
+        {sendError ? (
+          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {sendError}
+          </div>
+        ) : null}
         {humanMode ? (
           <div className="flex items-end gap-3">
             <button
@@ -681,7 +781,8 @@ ALMALU`);
               ref={imageInputRef}
               accept="image/*"
               className="hidden"
-              onChange={(event) => pickImage(event.target.files?.[0])}
+              multiple
+              onChange={(event) => pickImages(event.target.files)}
               type="file"
             />
             <input
@@ -706,28 +807,32 @@ ALMALU`);
               type="file"
             />
             <button
-              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700 disabled:opacity-50"
+              disabled={sendingMessage}
               onClick={() => imageInputRef.current?.click()}
               type="button"
             >
               Imagen
             </button>
             <button
-              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700 disabled:opacity-50"
+              disabled={sendingMessage}
               onClick={() => audioInputRef.current?.click()}
               type="button"
             >
               Audio
             </button>
             <button
-              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700 disabled:opacity-50"
+              disabled={sendingMessage}
               onClick={() => videoInputRef.current?.click()}
               type="button"
             >
               Video
             </button>
             <button
-              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700"
+              className="h-12 rounded-full border border-zinc-300 px-4 font-semibold text-zinc-700 disabled:opacity-50"
+              disabled={sendingMessage}
               onClick={() => documentInputRef.current?.click()}
               type="button"
             >
@@ -749,8 +854,13 @@ ALMALU`);
               style={{ height: draftHeight }}
               value={draft}
             />
-            <button className="h-12 rounded-full bg-emerald-600 px-6 font-semibold text-white" onClick={() => void sendMessage()} type="button">
-              Enviar
+            <button
+              className="h-12 rounded-full bg-emerald-600 px-6 font-semibold text-white disabled:opacity-60"
+              disabled={sendingMessage}
+              onClick={() => void sendMessage()}
+              type="button"
+            >
+              {sendingMessage ? "Enviando..." : "Enviar"}
             </button>
           </div>
         ) : (

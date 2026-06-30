@@ -138,13 +138,39 @@ function AudioPlayer({ src }: { src: string }) {
   );
 }
 
-export function MessageBubble({ message }: { message: Message }) {
+export function MessageBubble({
+  message,
+  selectable = false,
+  selected = false,
+  onToggleSelected,
+}: {
+  message: Message;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelected?: (messageId: number) => void;
+}) {
   const outgoing = message.role !== "user";
   const color = message.role === "assistant" ? "bg-emerald-100" : message.role === "human" ? "bg-amber-100" : "bg-white";
   const visibleText = isAutomaticMediaLabel(message) ? "" : message.content;
+  const selector = selectable ? (
+    <button
+      aria-label={selected ? "Quitar seleccion" : "Seleccionar mensaje"}
+      className={`grid h-8 w-8 shrink-0 place-items-center rounded-full border text-sm font-bold shadow-sm ${
+        selected
+          ? "border-emerald-600 bg-emerald-600 text-white"
+          : "border-zinc-300 bg-white text-transparent hover:text-zinc-500"
+      }`}
+      onClick={() => onToggleSelected?.(message.id)}
+      type="button"
+    >
+      {selected ? "✓" : "•"}
+    </button>
+  ) : null;
+
   return (
-    <div className={`flex ${outgoing ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[68%] rounded-md border border-black/5 px-3 py-2 shadow-sm ${color}`}>
+    <div className={`flex items-center gap-2 ${outgoing ? "justify-end" : "justify-start"}`}>
+      {!outgoing ? selector : null}
+      <div className={`max-w-[68%] rounded-md border border-black/5 px-3 py-2 shadow-sm ${color} ${selected ? "ring-2 ring-emerald-500" : ""}`}>
         {message.media_url && message.media_type === "image" ? (
           <a href={message.media_url} target="_blank" rel="noreferrer">
             <img
@@ -195,6 +221,7 @@ export function MessageBubble({ message }: { message: Message }) {
         {visibleText ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{messageTextWithLinks(visibleText)}</p> : null}
         <div className="mt-1 text-right text-[11px] text-zinc-500">{timeLabel(message.created_at)}</div>
       </div>
+      {outgoing ? selector : null}
     </div>
   );
 }

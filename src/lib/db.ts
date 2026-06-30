@@ -541,6 +541,20 @@ export function deleteMessageByRemoteId(accountId: number, remoteId: string) {
   })();
 }
 
+export function deleteMessages(conversationId: number, messageIds: number[]) {
+  const ids = Array.from(new Set(messageIds.map(Number).filter(Number.isFinite)));
+  if (ids.length === 0) return;
+  const db = getDb();
+  const placeholders = ids.map(() => "?").join(",");
+  db.transaction(() => {
+    db.prepare(`DELETE FROM messages WHERE conversation_id = ? AND id IN (${placeholders})`).run(conversationId, ...ids);
+    const latest = db
+      .prepare("SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+      .get(conversationId) as { created_at: number } | undefined;
+    db.prepare("UPDATE conversations SET last_message_at = ? WHERE id = ?").run(latest?.created_at ?? null, conversationId);
+  })();
+}
+
 export function getMessages(conversationId: number, limit = 80): Message[] {
   const rows = getDb()
     .prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?")
