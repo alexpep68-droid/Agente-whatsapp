@@ -61,6 +61,17 @@ export function ConversationPanel({
   const [paymentDraft, setPaymentDraft] = useState({ title: "Anticipo ALMALU", amount: "", note: "" });
   const [paymentError, setPaymentError] = useState("");
   const [creatingPayment, setCreatingPayment] = useState(false);
+  const [quoteDraft, setQuoteDraft] = useState({
+    client: "",
+    project: "",
+    measurements: "",
+    design: "",
+    itemsText: "",
+    total: "",
+    notes: "",
+  });
+  const [quoteError, setQuoteError] = useState("");
+  const [creatingQuote, setCreatingQuote] = useState(false);
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
@@ -375,6 +386,35 @@ ALMALU`);
     onChanged();
   }
 
+  async function createQuote() {
+    if (!conversation || creatingQuote) return;
+    setQuoteError("");
+    setCreatingQuote(true);
+    const res = await fetch("/api/quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        client: quoteDraft.client,
+        project: quoteDraft.project,
+        measurements: quoteDraft.measurements,
+        design: quoteDraft.design,
+        itemsText: quoteDraft.itemsText,
+        notes: quoteDraft.notes,
+        total: Number(quoteDraft.total.replace(/[$,\s]/g, "")),
+      }),
+    });
+    const json = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+    setCreatingQuote(false);
+    if (!res.ok) {
+      setQuoteError(json?.error || "No se pudo crear la cotizacion");
+      return;
+    }
+    if (json?.message) setDraft(json.message);
+    setShowQuote(false);
+    onChanged();
+  }
+
   function toggleLabel(name: string) {
     const nextLabels = labels.includes(name) ? labels.filter((label) => label !== name) : [...labels, name];
     void saveLabels(nextLabels);
@@ -436,7 +476,19 @@ ALMALU`);
           </button>
           <button
             className="h-10 rounded-full border border-emerald-200 px-4 text-sm font-semibold text-emerald-800"
-            onClick={() => setShowQuote(true)}
+            onClick={() => {
+              setQuoteError("");
+              setQuoteDraft({
+                client: profile?.customer_name || title,
+                project: profile?.project_type || "Cocina Integral",
+                measurements: profile?.measurements || "",
+                design: "Segun medidas, referencias y especificaciones compartidas por el cliente.",
+                itemsText: "1. Fabricacion a medida: Muebles interiores blancos, frente en color a eleccion del cliente.\n2. Cubierta / acabado: Segun material acordado.\n3. Instalacion: Transporte e instalacion incluidos segun alcance.",
+                total: "",
+                notes: "Accesorios, electrodomesticos y trabajos no mencionados se cotizan por separado.",
+              });
+              setShowQuote(true);
+            }}
             type="button"
           >
             Cotización
@@ -879,11 +931,11 @@ ALMALU`);
       ) : null}
       {showQuote ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
-          <div className="w-full max-w-lg rounded-md bg-white p-5 shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-md bg-white p-5 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-bold">Cotización</h2>
-                <p className="text-sm text-zinc-500">Prepara o adjunta una cotización para {title}.</p>
+                <h2 className="text-lg font-bold">Cotización ALMALU</h2>
+                <p className="text-sm text-zinc-500">Genera el PDF con el mismo formato y deja el mensaje listo para enviar.</p>
               </div>
               <button
                 className="h-9 rounded border border-zinc-300 px-3 text-sm font-semibold"
@@ -893,7 +945,80 @@ ALMALU`);
                 Cerrar
               </button>
             </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <label className="block text-sm font-semibold">
+                Cliente
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, client: event.target.value }))}
+                  value={quoteDraft.client}
+                />
+              </label>
+              <label className="block text-sm font-semibold">
+                Proyecto
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, project: event.target.value }))}
+                  placeholder="Ej. Cocina integral 2.50 m"
+                  value={quoteDraft.project}
+                />
+              </label>
+              <label className="block text-sm font-semibold">
+                Medidas
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, measurements: event.target.value }))}
+                  placeholder="Ej. 2.50 metros de largo"
+                  value={quoteDraft.measurements}
+                />
+              </label>
+              <label className="block text-sm font-semibold">
+                Total
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  inputMode="decimal"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, total: event.target.value }))}
+                  placeholder="Ej. 24900"
+                  value={quoteDraft.total}
+                />
+              </label>
+              <label className="block text-sm font-semibold md:col-span-2">
+                Diseño de referencia
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, design: event.target.value }))}
+                  value={quoteDraft.design}
+                />
+              </label>
+              <label className="block text-sm font-semibold md:col-span-2">
+                Conceptos incluidos
+                <textarea
+                  className="mt-1 h-40 w-full resize-none rounded border border-zinc-300 p-3 font-normal leading-relaxed outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, itemsText: event.target.value }))}
+                  placeholder="1. Cocina integral: interiores blancos, frente a eleccion, cubierta de formica."
+                  value={quoteDraft.itemsText}
+                />
+              </label>
+              <label className="block text-sm font-semibold md:col-span-2">
+                Notas / exclusiones
+                <textarea
+                  className="mt-1 h-24 w-full resize-none rounded border border-zinc-300 p-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setQuoteDraft((current) => ({ ...current, notes: event.target.value }))}
+                  value={quoteDraft.notes}
+                />
+              </label>
+              {quoteError ? <p className="rounded bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 md:col-span-2">{quoteError}</p> : null}
+            </div>
             <div className="mt-5 grid gap-3">
+              <button
+                className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-left hover:bg-emerald-100 disabled:opacity-60"
+                disabled={creatingQuote}
+                onClick={() => void createQuote()}
+                type="button"
+              >
+                <p className="font-semibold text-emerald-900">{creatingQuote ? "Generando PDF..." : "Generar PDF ALMALU"}</p>
+                <p className="mt-1 text-sm text-emerald-800">Crea el PDF, calcula anticipo 60% y liquidación 40%, y lo prepara para enviarlo por WhatsApp.</p>
+              </button>
               <button
                 className="rounded-md border border-emerald-200 p-4 text-left hover:bg-emerald-50"
                 onClick={() => quoteInputRef.current?.click()}
