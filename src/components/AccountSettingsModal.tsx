@@ -132,7 +132,7 @@ export function AccountSettingsModal({
     setPrompt(account.system_prompt);
     setEditingPrompt(false);
     setError(null);
-  }, [account]);
+  }, [account.id]);
 
   async function save() {
     setSaving(true);
