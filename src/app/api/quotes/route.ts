@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { enqueueOutbox, getConversationById, insertMessage } from "@/lib/store";
+import { enqueueOutbox, getConversationById } from "@/lib/store";
 import { hasOnlineStorage, uploadMedia } from "@/lib/media-storage";
 import { generateAlmaluQuotePdf, readJpegSize, type AlmaluQuoteInput } from "@/lib/quote-pdf";
 
@@ -160,14 +160,12 @@ export async function POST(req: NextRequest) {
 
     const media = { url: pdfUrl, type: "document" };
     const content = `[Documento enviado: ${pdfName}]`;
-    const messageId = await insertMessage(conversation.id, "human", content, media);
     await enqueueOutbox(conversation.account_id, conversation.id, conversation.phone, content, media);
 
     const message = clean(body?.message) || quoteMessage(project);
 
     return NextResponse.json({
       ok: true,
-      messageId,
       pdfUrl,
       jsonUrl,
       fileName: pdfName,
