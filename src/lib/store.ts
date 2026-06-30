@@ -49,6 +49,142 @@ function mapOutbox(row: Record<string, unknown>): OutboxItem {
   };
 }
 
+function hasText(value: string | null | undefined) {
+  return Boolean(value && value.trim());
+}
+
+function latestConversationTime(conversation: Conversation) {
+  return conversation.last_message_at ?? conversation.created_at ?? 0;
+}
+
+function pickCanonicalConversation(conversations: Conversation[]) {
+  return [...conversations].sort((left, right) => {
+    const leftIsPhone = left.phone.includes("@s.whatsapp.net") ? 1 : 0;
+    const rightIsPhone = right.phone.includes("@s.whatsapp.net") ? 1 : 0;
+    if (leftIsPhone !== rightIsPhone) return rightIsPhone - leftIsPhone;
+    return latestConversationTime(right) - latestConversationTime(left);
+  })[0];
+}
+
+function coalesceText<T extends string | null>(primary: T, fallback: T) {
+  return hasText(primary) ? primary : fallback;
+}
+
+async function mergeCustomerProfile(client: SupabaseClient, targetId: number, sourceId: number) {
+  const { data: profiles, error } = await client
+    .from("customer_profiles")
+    .select("*")
+    .in("conversation_id", [targetId, sourceId]);
+  if (error) fail(error, "No se pudo leer la ficha del cliente");
+
+  const target = (profiles || []).find((profile) => Number(profile.conversation_id) === targetId) as CustomerProfile | undefined;
+  const source = (profiles || []).find((profile) => Number(profile.conversation_id) === sourceId) as CustomerProfile | undefined;
+  if (!source) return;
+
+  if (!target) {
+    const { error: moveError } = await client
+      .from("customer_profiles")
+      .update({ conversation_id: targetId, updated_at: nowSeconds() })
+      .eq("conversation_id", sourceId);
+    if (moveError) fail(moveError, "No se pudo unir la ficha del cliente");
+    return;
+  }
+
+  const { error: updateError } = await client
+    .from("customer_profiles")
+    .update({
+      customer_name: coalesceText(target.customer_name, source.customer_name),
+      project_type: coalesceText(target.project_type, source.project_type),
+      city: coalesceText(target.city, source.city),
+      budget: coalesceText(target.budget, source.budget),
+      measurements: coalesceText(target.measurements, source.measurements),
+      visit_date: coalesceText(target.visit_date, source.visit_date),
+      notes: coalesceText(target.notes, source.notes),
+      updated_at: nowSeconds(),
+    })
+    .eq("conversation_id", targetId);
+  if (updateError) fail(updateError, "No se pudo actualizar la ficha del cliente");
+
+  const { error: deleteError } = await client.from("customer_profiles").delete().eq("conversation_id", sourceId);
+  if (deleteError) fail(deleteError, "No se pudo limpiar la ficha duplicada");
+}
+
+async function mergeConversationDuplicates(
+  client: SupabaseClient,
+  accountId: number,
+  phones: string[],
+  input: { name?: string | null; avatarUrl?: string | null },
+) {
+  const { data, error } = await client.from("conversations").select("*").eq("account_id", accountId).in("phone", phones);
+  if (error) fail(error, "No se pudieron leer los chats duplicados");
+
+  const conversations = (data || []) as Conversation[];
+  if (conversations.length <= 1) return;
+
+  const target = pickCanonicalConversation(conversations);
+  const sources = conversations.filter((conversation) => conversation.id !== target.id);
+  const cleanName = input.name?.trim();
+  const cleanAvatarUrl = input.avatarUrl?.trim();
+
+  let mergedName = cleanName || target.name;
+  let mergedAvatarUrl = cleanAvatarUrl || target.avatar_url;
+  let mergedMode: ConversationMode = target.mode;
+  let mergedLabel = target.label;
+  let mergedStage: PipelineStage = target.pipeline_stage;
+  let mergedLastMessageAt = target.last_message_at;
+
+  for (const source of sources) {
+    mergedName = mergedName || source.name;
+    mergedAvatarUrl = mergedAvatarUrl || source.avatar_url;
+    if (source.mode === "HUMAN") mergedMode = "HUMAN";
+    mergedLabel = mergedLabel || source.label;
+    if (mergedStage === "Nuevo cliente" && source.pipeline_stage !== "Nuevo cliente") {
+      mergedStage = source.pipeline_stage;
+    }
+    if ((source.last_message_at ?? 0) > (mergedLastMessageAt ?? 0)) {
+      mergedLastMessageAt = source.last_message_at;
+    }
+
+    await mergeCustomerProfile(client, target.id, source.id);
+
+    const { error: messageError } = await client
+      .from("messages")
+      .update({ conversation_id: target.id })
+      .eq("conversation_id", source.id);
+    if (messageError) fail(messageError, "No se pudieron mover los mensajes del chat duplicado");
+
+    const { error: outboxError } = await client
+      .from("outbox")
+      .update({ conversation_id: target.id, phone: target.phone })
+      .eq("conversation_id", source.id);
+    if (outboxError) fail(outboxError, "No se pudieron mover los envios pendientes del chat duplicado");
+
+    const { error: deleteError } = await client.from("conversations").delete().eq("id", source.id);
+    if (deleteError) fail(deleteError, "No se pudo borrar el chat duplicado");
+  }
+
+  const update: Record<string, unknown> = {
+    name: mergedName,
+    mode: mergedMode,
+    label: mergedLabel,
+    pipeline_stage: mergedStage,
+    last_message_at: mergedLastMessageAt,
+  };
+  if (conversationAvatarSupported !== false) update.avatar_url = mergedAvatarUrl;
+
+  const { error: updateError } = await client.from("conversations").update(update).eq("id", target.id);
+  if (updateError) {
+    if (/avatar_url/i.test(updateError.message)) {
+      conversationAvatarSupported = false;
+      delete update.avatar_url;
+      const { error: retryError } = await client.from("conversations").update(update).eq("id", target.id);
+      if (retryError) fail(retryError, "No se pudo actualizar el chat unido");
+      return;
+    }
+    fail(updateError, "No se pudo actualizar el chat unido");
+  }
+}
+
 async function seedSupabase(client: SupabaseClient) {
   if (!seedPromise) {
     seedPromise = (async () => {
@@ -298,6 +434,7 @@ export async function updateConversationContact(
 
   const client = await clientReady();
   if (!client) return sqlite.updateConversationContact(accountId, cleanPhones, { name: cleanName, avatarUrl: cleanAvatarUrl });
+  await mergeConversationDuplicates(client, accountId, cleanPhones, { name: cleanName, avatarUrl: cleanAvatarUrl });
 
   const update: Record<string, unknown> = {};
   if (cleanName) update.name = cleanName;

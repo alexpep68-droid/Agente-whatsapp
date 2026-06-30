@@ -502,6 +502,134 @@ export function updateConversationAvatar(accountId: number, phone: string, avata
     .run(cleanAvatarUrl, accountId, phone);
 }
 
+function hasValue(value: string | null | undefined) {
+  return Boolean(value && value.trim());
+}
+
+function latestConversationTime(conversation: Conversation) {
+  return conversation.last_message_at ?? conversation.created_at ?? 0;
+}
+
+function pickCanonicalConversation(conversations: Conversation[]) {
+  return [...conversations].sort((left, right) => {
+    const leftIsPhone = left.phone.includes("@s.whatsapp.net") ? 1 : 0;
+    const rightIsPhone = right.phone.includes("@s.whatsapp.net") ? 1 : 0;
+    if (leftIsPhone !== rightIsPhone) return rightIsPhone - leftIsPhone;
+    return latestConversationTime(right) - latestConversationTime(left);
+  })[0];
+}
+
+function coalesceText<T extends string | null>(primary: T, fallback: T) {
+  return hasValue(primary) ? primary : fallback;
+}
+
+function mergeCustomerProfile(db: Database.Database, targetId: number, sourceId: number) {
+  const target = db
+    .prepare("SELECT * FROM customer_profiles WHERE conversation_id = ?")
+    .get(targetId) as CustomerProfile | undefined;
+  const source = db
+    .prepare("SELECT * FROM customer_profiles WHERE conversation_id = ?")
+    .get(sourceId) as CustomerProfile | undefined;
+
+  if (!source) return;
+
+  if (!target) {
+    db.prepare("UPDATE customer_profiles SET conversation_id = ?, updated_at = unixepoch() WHERE conversation_id = ?").run(
+      targetId,
+      sourceId,
+    );
+    return;
+  }
+
+  db.prepare(
+    `
+      UPDATE customer_profiles
+      SET customer_name = ?,
+          project_type = ?,
+          city = ?,
+          budget = ?,
+          measurements = ?,
+          visit_date = ?,
+          notes = ?,
+          updated_at = unixepoch()
+      WHERE conversation_id = ?
+    `,
+  ).run(
+    coalesceText(target.customer_name, source.customer_name),
+    coalesceText(target.project_type, source.project_type),
+    coalesceText(target.city, source.city),
+    coalesceText(target.budget, source.budget),
+    coalesceText(target.measurements, source.measurements),
+    coalesceText(target.visit_date, source.visit_date),
+    coalesceText(target.notes, source.notes),
+    targetId,
+  );
+  db.prepare("DELETE FROM customer_profiles WHERE conversation_id = ?").run(sourceId);
+}
+
+function mergeConversationDuplicates(
+  accountId: number,
+  phones: string[],
+  input: { name?: string | null; avatarUrl?: string | null },
+) {
+  const db = getDb();
+  const placeholders = phones.map(() => "?").join(",");
+  const conversations = db
+    .prepare(`SELECT * FROM conversations WHERE account_id = ? AND phone IN (${placeholders})`)
+    .all(accountId, ...phones) as Conversation[];
+
+  if (conversations.length <= 1) return;
+
+  const target = pickCanonicalConversation(conversations);
+  const sources = conversations.filter((conversation) => conversation.id !== target.id);
+  const cleanName = input.name?.trim();
+  const cleanAvatarUrl = input.avatarUrl?.trim();
+
+  db.transaction(() => {
+    let mergedName = cleanName || target.name;
+    let mergedAvatarUrl = cleanAvatarUrl || target.avatar_url;
+    let mergedMode: ConversationMode = target.mode;
+    let mergedLabel = target.label;
+    let mergedStage: PipelineStage = target.pipeline_stage;
+    let mergedLastMessageAt = target.last_message_at;
+
+    for (const source of sources) {
+      mergedName = mergedName || source.name;
+      mergedAvatarUrl = mergedAvatarUrl || source.avatar_url;
+      if (source.mode === "HUMAN") mergedMode = "HUMAN";
+      mergedLabel = mergedLabel || source.label;
+      if (mergedStage === "Nuevo cliente" && source.pipeline_stage !== "Nuevo cliente") {
+        mergedStage = source.pipeline_stage;
+      }
+      if ((source.last_message_at ?? 0) > (mergedLastMessageAt ?? 0)) {
+        mergedLastMessageAt = source.last_message_at;
+      }
+
+      mergeCustomerProfile(db, target.id, source.id);
+      db.prepare("UPDATE messages SET conversation_id = ? WHERE conversation_id = ?").run(target.id, source.id);
+      db.prepare("UPDATE outbox SET conversation_id = ?, phone = ? WHERE conversation_id = ?").run(
+        target.id,
+        target.phone,
+        source.id,
+      );
+      db.prepare("DELETE FROM conversations WHERE id = ?").run(source.id);
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET name = ?,
+            avatar_url = ?,
+            mode = ?,
+            label = ?,
+            pipeline_stage = ?,
+            last_message_at = ?
+        WHERE id = ?
+      `,
+    ).run(mergedName, mergedAvatarUrl, mergedMode, mergedLabel, mergedStage, mergedLastMessageAt, target.id);
+  })();
+}
+
 export function updateConversationContact(
   accountId: number,
   phones: string[],
@@ -509,6 +637,7 @@ export function updateConversationContact(
 ) {
   const cleanPhones = Array.from(new Set(phones.map((phone) => phone.trim()).filter(Boolean)));
   if (!cleanPhones.length) return;
+  mergeConversationDuplicates(accountId, cleanPhones, input);
 
   const fields: string[] = [];
   const values: unknown[] = [];
