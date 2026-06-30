@@ -218,6 +218,31 @@ function consumeBotEcho(accountId: number, jid: string, text: string) {
   return expiresAt > Date.now();
 }
 
+function equivalentOutgoingTexts(text: string) {
+  const clean = text.trim();
+  const variants = new Set([clean]);
+  variants.add(clean.replace("[Imagen recibida]", "[Imagen enviada]"));
+  variants.add(clean.replace("[Imagen enviada]", "[Imagen recibida]"));
+  variants.add(clean.replace("[Video recibido]", "[Video enviado]"));
+  variants.add(clean.replace("[Video enviado]", "[Video recibido]"));
+  variants.add(clean.replace("[Audio recibido]", "[Audio enviado]"));
+  variants.add(clean.replace("[Audio enviado]", "[Audio recibido]"));
+  variants.add(clean.replace("[Sticker recibido]", "[Sticker enviado]"));
+  variants.add(clean.replace("[Sticker enviado]", "[Sticker recibido]"));
+  return variants;
+}
+
+async function isRecentOutgoingDuplicate(conversationId: number, text: string) {
+  const variants = equivalentOutgoingTexts(text);
+  const now = Math.floor(Date.now() / 1000);
+  const recent = await getRecentHistory(conversationId, 12);
+  return recent.some((message) => {
+    if (message.role !== "human") return false;
+    if (!variants.has(message.content.trim())) return false;
+    return now - message.created_at <= 3 * 60;
+  });
+}
+
 export async function handleIncomingMessage(
   accountId: number,
   sock: WASocket,
@@ -251,6 +276,10 @@ export async function handleIncomingMessage(
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
   const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined);
+  if (msg.key.fromMe && (await isRecentOutgoingDuplicate(convo.id, text))) {
+    console.log(`[bot:${accountId}] eco saliente ignorado ${phone}`);
+    return;
+  }
   if (!msg.key.fromMe && !convo.avatar_url) {
     void maybeUpdateConversationAvatar(accountId, sock, remoteJid);
   }
