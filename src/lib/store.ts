@@ -284,6 +284,49 @@ export async function updateConversationAvatar(accountId: number, phone: string,
   conversationAvatarSupported = true;
 }
 
+export async function updateConversationContact(
+  accountId: number,
+  phones: string[],
+  input: { name?: string | null; avatarUrl?: string | null },
+) {
+  const cleanPhones = Array.from(new Set(phones.map((phone) => phone.trim()).filter(Boolean)));
+  if (!cleanPhones.length) return;
+
+  const cleanName = input.name?.trim();
+  const cleanAvatarUrl = input.avatarUrl?.trim();
+  if (!cleanName && !cleanAvatarUrl) return;
+
+  const client = await clientReady();
+  if (!client) return sqlite.updateConversationContact(accountId, cleanPhones, { name: cleanName, avatarUrl: cleanAvatarUrl });
+
+  const update: Record<string, unknown> = {};
+  if (cleanName) update.name = cleanName;
+  if (cleanAvatarUrl && conversationAvatarSupported !== false) update.avatar_url = cleanAvatarUrl;
+  if (!Object.keys(update).length) return;
+
+  const { error } = await client
+    .from("conversations")
+    .update(update)
+    .eq("account_id", accountId)
+    .in("phone", cleanPhones);
+  if (error) {
+    if (cleanAvatarUrl && /avatar_url/i.test(error.message)) {
+      conversationAvatarSupported = false;
+      if (cleanName) {
+        const { error: nameError } = await client
+          .from("conversations")
+          .update({ name: cleanName })
+          .eq("account_id", accountId)
+          .in("phone", cleanPhones);
+        if (nameError) fail(nameError, "No se pudo actualizar el nombre del contacto");
+      }
+      return;
+    }
+    fail(error, "No se pudo actualizar el contacto");
+  }
+  if (cleanAvatarUrl) conversationAvatarSupported = true;
+}
+
 export async function insertMessage(
   conversationId: number,
   role: MessageRole,

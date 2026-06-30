@@ -11,10 +11,10 @@ import {
   getPendingOutbox,
   getRecentHistory,
   insertMessage,
+  listConversations,
   markOutboxSent,
   pauseAccountAi,
-  updateConversationAvatar,
-  updateConversationName,
+  updateConversationContact,
 } from "../store";
 import { generateReply } from "../openrouter";
 import { hasOnlineStorage, uploadMedia } from "../media-storage";
@@ -31,17 +31,25 @@ function candidateContactPhones(contact: { id?: string; jid?: string; lid?: stri
   return [contact.id, contact.jid, contact.lid].filter((value): value is string => Boolean(value && isSupportedChatJid(value)));
 }
 
+function uniquePhones(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
 function bestContactName(contact: { name?: string | null; notify?: string | null; verifiedName?: string | null }) {
   return (contact.name || contact.verifiedName || contact.notify || "").trim();
 }
 
-async function maybeUpdateConversationAvatar(accountId: number, sock: WASocket, jid: string) {
+async function maybeUpdateConversationAvatar(accountId: number, sock: WASocket, jid: string, phones = [jid]) {
   try {
     const avatarUrl = await sock.profilePictureUrl(jid, "image");
-    if (avatarUrl) await updateConversationAvatar(accountId, jid, avatarUrl);
+    if (avatarUrl) await updateConversationContact(accountId, uniquePhones(phones), { avatarUrl });
   } catch {
     // WhatsApp may hide profile pictures by privacy settings; keep the initials fallback.
   }
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isSupportedChatJid(jid: string) {
@@ -284,9 +292,25 @@ export async function handleContactUpdate(
   sock?: WASocket,
 ) {
   const name = bestContactName(contact);
-  for (const phone of candidateContactPhones(contact)) {
-    if (name) await updateConversationName(accountId, phone, name);
-    if (sock) void maybeUpdateConversationAvatar(accountId, sock, phone);
+  const phones = uniquePhones(candidateContactPhones(contact));
+  if (!phones.length) return;
+  if (name) await updateConversationContact(accountId, phones, { name });
+  if (sock) {
+    void maybeUpdateConversationAvatar(accountId, sock, phones[0], phones);
+  }
+}
+
+export async function refreshKnownContacts(accountId: number, sock: WASocket) {
+  const conversations = await listConversations(accountId);
+  const candidates = conversations
+    .filter((conversation) => isSupportedChatJid(conversation.phone))
+    .filter((conversation) => !conversation.avatar_url)
+    .slice(0, 150);
+
+  console.log(`[bot:${accountId}] refrescando fotos de contactos pendientes=${candidates.length}`);
+  for (const conversation of candidates) {
+    await maybeUpdateConversationAvatar(accountId, sock, conversation.phone);
+    await delay(250);
   }
 }
 

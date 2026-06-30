@@ -11,7 +11,14 @@ import makeWASocket, {
 import pino from "pino";
 import qrcodeTerminal from "qrcode-terminal";
 import { setAccountState, type Account } from "../store";
-import { flushOutbox, handleContactUpdate, handleIncomingMessage, handleMessageDelete, handleMessageUpdate } from "./handler";
+import {
+  flushOutbox,
+  handleContactUpdate,
+  handleIncomingMessage,
+  handleMessageDelete,
+  handleMessageUpdate,
+  refreshKnownContacts,
+} from "./handler";
 
 export interface BotHandle {
   accountId: number;
@@ -132,6 +139,9 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
     if (connection === "open") {
       connected = true;
       void setAccountState(accountId, { status: "connected", qr_string: null, phone: phoneFromSocket(sock) });
+      void refreshKnownContacts(accountId, sock).catch((err) => {
+        console.error(`[bot:${accountId}] error refrescando contactos`, err);
+      });
       console.log(`[bot:${accountId}] conectado`);
     }
 

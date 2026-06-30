@@ -502,6 +502,35 @@ export function updateConversationAvatar(accountId: number, phone: string, avata
     .run(cleanAvatarUrl, accountId, phone);
 }
 
+export function updateConversationContact(
+  accountId: number,
+  phones: string[],
+  input: { name?: string | null; avatarUrl?: string | null },
+) {
+  const cleanPhones = Array.from(new Set(phones.map((phone) => phone.trim()).filter(Boolean)));
+  if (!cleanPhones.length) return;
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  const cleanName = input.name?.trim();
+  const cleanAvatarUrl = input.avatarUrl?.trim();
+
+  if (cleanName) {
+    fields.push("name = ?");
+    values.push(cleanName);
+  }
+  if (cleanAvatarUrl) {
+    fields.push("avatar_url = ?");
+    values.push(cleanAvatarUrl);
+  }
+  if (!fields.length) return;
+
+  const placeholders = cleanPhones.map(() => "?").join(",");
+  getDb()
+    .prepare(`UPDATE conversations SET ${fields.join(", ")} WHERE account_id = ? AND phone IN (${placeholders})`)
+    .run(...values, accountId, ...cleanPhones);
+}
+
 export function getConversationById(id: number): Conversation | null {
   return (getDb().prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | undefined) ?? null;
 }
