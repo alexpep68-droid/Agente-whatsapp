@@ -39,6 +39,7 @@ export interface Conversation {
   mode: ConversationMode;
   label: string | null;
   pipeline_stage: PipelineStage;
+  avatar_url: string | null;
   last_message_at: number | null;
   created_at: number;
   last_message_preview?: string | null;
@@ -222,6 +223,7 @@ function getDb() {
       mode TEXT CHECK(mode IN ('AI','HUMAN')) NOT NULL DEFAULT 'AI',
       label TEXT,
       pipeline_stage TEXT NOT NULL DEFAULT 'Nuevo cliente',
+      avatar_url TEXT,
       last_message_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       UNIQUE(account_id, phone)
@@ -308,6 +310,9 @@ function getDb() {
   const conversationColumnNames = new Set(conversationColumns.map((column) => column.name));
   if (!conversationColumnNames.has("pipeline_stage")) {
     db.prepare("ALTER TABLE conversations ADD COLUMN pipeline_stage TEXT NOT NULL DEFAULT 'Nuevo cliente'").run();
+  }
+  if (!conversationColumnNames.has("avatar_url")) {
+    db.prepare("ALTER TABLE conversations ADD COLUMN avatar_url TEXT").run();
   }
 
   const accountColumns = db.prepare("PRAGMA table_info(accounts)").all() as { name: string }[];
@@ -487,6 +492,14 @@ export function updateConversationName(accountId: number, phone: string, name: s
   getDb()
     .prepare("UPDATE conversations SET name = ? WHERE account_id = ? AND phone = ?")
     .run(cleanName, accountId, phone);
+}
+
+export function updateConversationAvatar(accountId: number, phone: string, avatarUrl: string) {
+  const cleanAvatarUrl = avatarUrl.trim();
+  if (!cleanAvatarUrl) return;
+  getDb()
+    .prepare("UPDATE conversations SET avatar_url = ? WHERE account_id = ? AND phone = ?")
+    .run(cleanAvatarUrl, accountId, phone);
 }
 
 export function getConversationById(id: number): Conversation | null {

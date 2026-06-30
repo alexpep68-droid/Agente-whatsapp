@@ -8,6 +8,7 @@ type MediaInput = { url: string; type: string } | null;
 let supabaseClient: SupabaseClient | null = null;
 let seedPromise: Promise<void> | null = null;
 let messageRemoteIdSupported: boolean | null = null;
+let conversationAvatarSupported: boolean | null = null;
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -261,6 +262,26 @@ export async function updateConversationName(accountId: number, phone: string, n
   if (!client) return sqlite.updateConversationName(accountId, phone, cleanName);
   const { error } = await client.from("conversations").update({ name: cleanName }).eq("account_id", accountId).eq("phone", phone);
   if (error) fail(error, "No se pudo actualizar el nombre del contacto");
+}
+
+export async function updateConversationAvatar(accountId: number, phone: string, avatarUrl: string) {
+  const cleanAvatarUrl = avatarUrl.trim();
+  if (!cleanAvatarUrl || conversationAvatarSupported === false) return;
+  const client = await clientReady();
+  if (!client) return sqlite.updateConversationAvatar(accountId, phone, cleanAvatarUrl);
+  const { error } = await client
+    .from("conversations")
+    .update({ avatar_url: cleanAvatarUrl })
+    .eq("account_id", accountId)
+    .eq("phone", phone);
+  if (error) {
+    if (/avatar_url/i.test(error.message)) {
+      conversationAvatarSupported = false;
+      return;
+    }
+    fail(error, "No se pudo actualizar la foto del contacto");
+  }
+  conversationAvatarSupported = true;
 }
 
 export async function insertMessage(

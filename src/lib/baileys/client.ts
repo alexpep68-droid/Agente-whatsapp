@@ -84,14 +84,14 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
   });
   sock.ev.on("contacts.upsert", (contacts) => {
     for (const contact of contacts) {
-      void handleContactUpdate(accountId, contact).catch((err) => {
+      void handleContactUpdate(accountId, contact, sock).catch((err) => {
         console.error(`[bot:${accountId}] error sincronizando contacto`, err);
       });
     }
   });
   sock.ev.on("contacts.update", (contacts) => {
     for (const contact of contacts) {
-      void handleContactUpdate(accountId, contact).catch((err) => {
+      void handleContactUpdate(accountId, contact, sock).catch((err) => {
         console.error(`[bot:${accountId}] error actualizando contacto`, err);
       });
     }
@@ -101,12 +101,12 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
       `[bot:${accountId}] historial recibido chats=${event.chats.length} mensajes=${event.messages.length}`,
     );
     for (const contact of event.contacts) {
-      void handleContactUpdate(accountId, contact).catch((err) => {
+      void handleContactUpdate(accountId, contact, sock).catch((err) => {
         console.error(`[bot:${accountId}] error sincronizando contacto de historial`, err);
       });
     }
     for (const chat of event.chats) {
-      void handleContactUpdate(accountId, chat).catch((err) => {
+      void handleContactUpdate(accountId, chat, sock).catch((err) => {
         console.error(`[bot:${accountId}] error sincronizando nombre de chat`, err);
       });
     }

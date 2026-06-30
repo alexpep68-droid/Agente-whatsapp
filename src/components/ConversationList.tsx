@@ -144,8 +144,12 @@ export function ConversationList({
               onClick={() => onSelect(conversation)}
               type="button"
             >
-              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-emerald-100 font-bold text-emerald-800">
-                {initials(title)}
+              <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-emerald-100 font-bold text-emerald-800">
+                {conversation.avatar_url ? (
+                  <img alt={title} className="h-full w-full object-cover" src={conversation.avatar_url} />
+                ) : (
+                  initials(title)
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-3">

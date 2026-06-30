@@ -13,6 +13,7 @@ import {
   insertMessage,
   markOutboxSent,
   pauseAccountAi,
+  updateConversationAvatar,
   updateConversationName,
 } from "../store";
 import { generateReply } from "../openrouter";
@@ -32,6 +33,15 @@ function candidateContactPhones(contact: { id?: string; jid?: string; lid?: stri
 
 function bestContactName(contact: { name?: string | null; notify?: string | null; verifiedName?: string | null }) {
   return (contact.name || contact.verifiedName || contact.notify || "").trim();
+}
+
+async function maybeUpdateConversationAvatar(accountId: number, sock: WASocket, jid: string) {
+  try {
+    const avatarUrl = await sock.profilePictureUrl(jid, "image");
+    if (avatarUrl) await updateConversationAvatar(accountId, jid, avatarUrl);
+  } catch {
+    // WhatsApp may hide profile pictures by privacy settings; keep the initials fallback.
+  }
 }
 
 function isSupportedChatJid(jid: string) {
@@ -233,6 +243,9 @@ export async function handleIncomingMessage(
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
   const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined);
+  if (!msg.key.fromMe && !convo.avatar_url) {
+    void maybeUpdateConversationAvatar(accountId, sock, remoteJid);
+  }
   await insertMessage(convo.id, role, text, attachment, msg.key.id || null);
 
   if (msg.key.fromMe) return;
@@ -268,11 +281,12 @@ export async function handleIncomingMessage(
 export async function handleContactUpdate(
   accountId: number,
   contact: { id?: string; jid?: string; lid?: string; name?: string | null; notify?: string | null; verifiedName?: string | null },
+  sock?: WASocket,
 ) {
   const name = bestContactName(contact);
-  if (!name) return;
   for (const phone of candidateContactPhones(contact)) {
-    await updateConversationName(accountId, phone, name);
+    if (name) await updateConversationName(accountId, phone, name);
+    if (sock) void maybeUpdateConversationAvatar(accountId, sock, phone);
   }
 }
 

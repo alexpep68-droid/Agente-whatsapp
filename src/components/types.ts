@@ -33,6 +33,7 @@ export interface Conversation {
   mode: ConversationMode;
   label: string | null;
   pipeline_stage: PipelineStage;
+  avatar_url: string | null;
   last_message_at: number | null;
   created_at: number;
   last_message_preview?: string | null;
