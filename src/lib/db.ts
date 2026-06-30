@@ -51,6 +51,7 @@ export interface Message {
   content: string;
   media_url: string | null;
   media_type: string | null;
+  remote_id: string | null;
   created_at: number;
 }
 
@@ -233,6 +234,7 @@ function getDb() {
       content TEXT NOT NULL,
       media_url TEXT,
       media_type TEXT,
+      remote_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
@@ -324,6 +326,9 @@ function getDb() {
   }
   if (!messageColumnNames.has("media_type")) {
     db.prepare("ALTER TABLE messages ADD COLUMN media_type TEXT").run();
+  }
+  if (!messageColumnNames.has("remote_id")) {
+    db.prepare("ALTER TABLE messages ADD COLUMN remote_id TEXT").run();
   }
 
   const outboxColumns = db.prepare("PRAGMA table_info(outbox)").all() as { name: string }[];
@@ -476,6 +481,14 @@ export function getOrCreateConversation(accountId: number, phone: string, name?:
   return getConversationById(Number(result.lastInsertRowid))!;
 }
 
+export function updateConversationName(accountId: number, phone: string, name: string) {
+  const cleanName = name.trim();
+  if (!cleanName) return;
+  getDb()
+    .prepare("UPDATE conversations SET name = ? WHERE account_id = ? AND phone = ?")
+    .run(cleanName, accountId, phone);
+}
+
 export function getConversationById(id: number): Conversation | null {
   return (getDb().prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | undefined) ?? null;
 }
@@ -485,14 +498,46 @@ export function insertMessage(
   role: MessageRole,
   content: string,
   media?: { url: string; type: string } | null,
+  remoteId?: string | null,
 ) {
   const db = getDb();
   return db.transaction(() => {
     const result = db
-      .prepare("INSERT INTO messages (conversation_id, role, content, media_url, media_type) VALUES (?, ?, ?, ?, ?)")
-      .run(conversationId, role, content, media?.url ?? null, media?.type ?? null);
+      .prepare("INSERT INTO messages (conversation_id, role, content, media_url, media_type, remote_id) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(conversationId, role, content, media?.url ?? null, media?.type ?? null, remoteId ?? null);
     db.prepare("UPDATE conversations SET last_message_at = unixepoch() WHERE id = ?").run(conversationId);
     return Number(result.lastInsertRowid);
+  })();
+}
+
+export function deleteMessageByRemoteId(accountId: number, remoteId: string) {
+  if (!remoteId.trim()) return;
+  const db = getDb();
+  db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT m.conversation_id
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.account_id = ? AND m.remote_id = ?
+         LIMIT 1`,
+      )
+      .get(accountId, remoteId) as { conversation_id: number } | undefined;
+    db.prepare(
+      `DELETE FROM messages
+       WHERE id IN (
+         SELECT m.id
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.account_id = ? AND m.remote_id = ?
+       )`,
+    ).run(accountId, remoteId);
+    if (row) {
+      const latest = db
+        .prepare("SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+        .get(row.conversation_id) as { created_at: number } | undefined;
+      db.prepare("UPDATE conversations SET last_message_at = ? WHERE id = ?").run(latest?.created_at ?? null, row.conversation_id);
+    }
   })();
 }
 

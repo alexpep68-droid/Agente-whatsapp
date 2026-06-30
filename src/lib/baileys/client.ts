@@ -11,7 +11,7 @@ import makeWASocket, {
 import pino from "pino";
 import qrcodeTerminal from "qrcode-terminal";
 import { setAccountState, type Account } from "../store";
-import { flushOutbox, handleIncomingMessage } from "./handler";
+import { flushOutbox, handleContactUpdate, handleIncomingMessage, handleMessageDelete, handleMessageUpdate } from "./handler";
 
 export interface BotHandle {
   accountId: number;
@@ -67,10 +67,49 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
       });
     }
   });
+  sock.ev.on("messages.update", (updates) => {
+    for (const update of updates) {
+      void handleMessageUpdate(accountId, update).catch((err) => {
+        console.error(`[bot:${accountId}] error sincronizando actualizacion de mensaje`, err);
+      });
+    }
+  });
+  sock.ev.on("messages.delete", (event) => {
+    if ("all" in event) return;
+    for (const key of event.keys) {
+      void handleMessageDelete(accountId, key).catch((err) => {
+        console.error(`[bot:${accountId}] error sincronizando borrado de mensaje`, err);
+      });
+    }
+  });
+  sock.ev.on("contacts.upsert", (contacts) => {
+    for (const contact of contacts) {
+      void handleContactUpdate(accountId, contact).catch((err) => {
+        console.error(`[bot:${accountId}] error sincronizando contacto`, err);
+      });
+    }
+  });
+  sock.ev.on("contacts.update", (contacts) => {
+    for (const contact of contacts) {
+      void handleContactUpdate(accountId, contact).catch((err) => {
+        console.error(`[bot:${accountId}] error actualizando contacto`, err);
+      });
+    }
+  });
   sock.ev.on("messaging-history.set", (event) => {
     console.log(
       `[bot:${accountId}] historial recibido chats=${event.chats.length} mensajes=${event.messages.length}`,
     );
+    for (const contact of event.contacts) {
+      void handleContactUpdate(accountId, contact).catch((err) => {
+        console.error(`[bot:${accountId}] error sincronizando contacto de historial`, err);
+      });
+    }
+    for (const chat of event.chats) {
+      void handleContactUpdate(accountId, chat).catch((err) => {
+        console.error(`[bot:${accountId}] error sincronizando nombre de chat`, err);
+      });
+    }
     for (const message of event.messages) {
       void handleIncomingMessage(accountId, sock, message, "history").catch((err) => {
         console.error(`[bot:${accountId}] error procesando historial`, err);

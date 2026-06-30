@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { downloadMediaMessage, type WASocket, type proto } from "@whiskeysockets/baileys";
 import pino from "pino";
 import {
+  deleteMessageByRemoteId,
   getAccountById,
   getConversationById,
   getOrCreateConversation,
@@ -12,6 +13,7 @@ import {
   insertMessage,
   markOutboxSent,
   pauseAccountAi,
+  updateConversationName,
 } from "../store";
 import { generateReply } from "../openrouter";
 import { hasOnlineStorage, uploadMedia } from "../media-storage";
@@ -22,6 +24,14 @@ const mediaLogger = pino({ level: "silent" });
 
 function phoneFromJid(jid: string) {
   return jid;
+}
+
+function candidateContactPhones(contact: { id?: string; jid?: string; lid?: string }) {
+  return [contact.id, contact.jid, contact.lid].filter((value): value is string => Boolean(value && isSupportedChatJid(value)));
+}
+
+function bestContactName(contact: { name?: string | null; notify?: string | null; verifiedName?: string | null }) {
+  return (contact.name || contact.verifiedName || contact.notify || "").trim();
 }
 
 function isSupportedChatJid(jid: string) {
@@ -223,7 +233,7 @@ export async function handleIncomingMessage(
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
   const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined);
-  await insertMessage(convo.id, role, text, attachment);
+  await insertMessage(convo.id, role, text, attachment, msg.key.id || null);
 
   if (msg.key.fromMe) return;
   if (sourceType !== "notify") {
@@ -255,6 +265,33 @@ export async function handleIncomingMessage(
   console.log(`[bot:${accountId}] -> Enviado a ${phone}`);
 }
 
+export async function handleContactUpdate(
+  accountId: number,
+  contact: { id?: string; jid?: string; lid?: string; name?: string | null; notify?: string | null; verifiedName?: string | null },
+) {
+  const name = bestContactName(contact);
+  if (!name) return;
+  for (const phone of candidateContactPhones(contact)) {
+    await updateConversationName(accountId, phone, name);
+  }
+}
+
+export async function handleMessageUpdate(accountId: number, update: { key?: { id?: string | null }; update?: { message?: unknown } }) {
+  if (update.update && Object.prototype.hasOwnProperty.call(update.update, "message") && update.update.message === null) {
+    const remoteId = update.key?.id;
+    if (!remoteId) return;
+    await deleteMessageByRemoteId(accountId, remoteId);
+    console.log(`[bot:${accountId}] mensaje eliminado sincronizado id=${remoteId}`);
+  }
+}
+
+export async function handleMessageDelete(accountId: number, key: { id?: string | null }) {
+  const remoteId = key.id;
+  if (!remoteId) return;
+  await deleteMessageByRemoteId(accountId, remoteId);
+  console.log(`[bot:${accountId}] mensaje eliminado sincronizado id=${remoteId}`);
+}
+
 export async function flushOutbox(accountId: number, sock: WASocket) {
   const pending = await getPendingOutbox(accountId, 20);
   for (const item of pending) {
@@ -272,6 +309,7 @@ export async function flushOutbox(accountId: number, sock: WASocket) {
       } else if (item.media_url && item.media_type === "document") {
         const fileName = documentNameFromContent(item.content, item.media_url);
         const caption = /^\[Documento enviado(: .*)?\]$/.test(item.content) ? undefined : item.content;
+        rememberBotEcho(accountId, jid, caption || `[Documento recibido: ${fileName}]`);
         await sock.sendMessage(jid, {
           document: await bufferFromMediaUrl(item.media_url),
           fileName,
@@ -279,6 +317,7 @@ export async function flushOutbox(accountId: number, sock: WASocket) {
           caption,
         });
       } else if (item.media_url && item.media_type === "audio") {
+        rememberBotEcho(accountId, jid, "[Audio recibido]");
         await sock.sendMessage(jid, {
           audio: await bufferFromMediaUrl(item.media_url),
           mimetype: "audio/ogg; codecs=opus",

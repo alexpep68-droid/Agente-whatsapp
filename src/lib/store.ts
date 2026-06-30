@@ -7,6 +7,7 @@ type MediaInput = { url: string; type: string } | null;
 
 let supabaseClient: SupabaseClient | null = null;
 let seedPromise: Promise<void> | null = null;
+let messageRemoteIdSupported: boolean | null = null;
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -253,25 +254,44 @@ export async function getConversationById(id: number): Promise<Conversation | nu
   return (data as Conversation | null) ?? null;
 }
 
+export async function updateConversationName(accountId: number, phone: string, name: string) {
+  const cleanName = name.trim();
+  if (!cleanName) return;
+  const client = await clientReady();
+  if (!client) return sqlite.updateConversationName(accountId, phone, cleanName);
+  const { error } = await client.from("conversations").update({ name: cleanName }).eq("account_id", accountId).eq("phone", phone);
+  if (error) fail(error, "No se pudo actualizar el nombre del contacto");
+}
+
 export async function insertMessage(
   conversationId: number,
   role: MessageRole,
   content: string,
   media?: MediaInput,
+  remoteId?: string | null,
 ): Promise<number> {
   const client = await clientReady();
-  if (!client) return sqlite.insertMessage(conversationId, role, content, media);
-  const { data, error } = await client
-    .from("messages")
-    .insert({
-      conversation_id: conversationId,
-      role,
-      content,
-      media_url: media?.url ?? null,
-      media_type: media?.type ?? null,
-    })
-    .select("id")
-    .single();
+  if (!client) return sqlite.insertMessage(conversationId, role, content, media, remoteId);
+
+  const row = {
+    conversation_id: conversationId,
+    role,
+    content,
+    media_url: media?.url ?? null,
+    media_type: media?.type ?? null,
+  } as Record<string, unknown>;
+  if (remoteId && messageRemoteIdSupported !== false) row.remote_id = remoteId;
+
+  let result = await client.from("messages").insert(row).select("id").single();
+  if (result.error && remoteId && messageRemoteIdSupported !== false && /remote_id/i.test(result.error.message)) {
+    messageRemoteIdSupported = false;
+    delete row.remote_id;
+    result = await client.from("messages").insert(row).select("id").single();
+  } else if (!result.error && remoteId) {
+    messageRemoteIdSupported = true;
+  }
+
+  const { data, error } = result;
   if (error) fail(error, "No se pudo guardar el mensaje");
   const { error: updateError } = await client
     .from("conversations")
@@ -279,6 +299,54 @@ export async function insertMessage(
     .eq("id", conversationId);
   if (updateError) fail(updateError, "No se pudo actualizar la conversacion");
   return Number(data.id);
+}
+
+export async function deleteMessageByRemoteId(accountId: number, remoteId: string) {
+  const cleanRemoteId = remoteId.trim();
+  if (!cleanRemoteId) return;
+  const client = await clientReady();
+  if (!client) return sqlite.deleteMessageByRemoteId(accountId, cleanRemoteId);
+
+  const { data: conversations, error: conversationsError } = await client
+    .from("conversations")
+    .select("id")
+    .eq("account_id", accountId);
+  if (conversationsError) fail(conversationsError, "No se pudieron leer las conversaciones");
+  const conversationIds = (conversations || []).map((row) => Number(row.id));
+  if (!conversationIds.length) return;
+
+  const { data: deleted, error } = await client
+    .from("messages")
+    .delete()
+    .in("conversation_id", conversationIds)
+    .eq("remote_id", cleanRemoteId)
+    .select("conversation_id");
+  if (error) {
+    if (/remote_id/i.test(error.message)) {
+      messageRemoteIdSupported = false;
+      return;
+    }
+    fail(error, "No se pudo borrar el mensaje eliminado en WhatsApp");
+  }
+  messageRemoteIdSupported = true;
+
+  const changedConversationIds = Array.from(new Set((deleted || []).map((row) => Number(row.conversation_id))));
+  for (const conversationId of changedConversationIds) {
+    const { data: latest, error: latestError } = await client
+      .from("messages")
+      .select("created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestError) fail(latestError, "No se pudo actualizar la conversacion");
+    const { error: updateError } = await client
+      .from("conversations")
+      .update({ last_message_at: latest?.created_at ?? null })
+      .eq("id", conversationId);
+    if (updateError) fail(updateError, "No se pudo actualizar la conversacion");
+  }
 }
 
 export async function getMessages(conversationId: number, limit = 80): Promise<Message[]> {

@@ -33,6 +33,7 @@ create table if not exists public.messages (
   content text not null,
   media_url text,
   media_type text,
+  remote_id text,
   created_at bigint not null default extract(epoch from now())::bigint
 );
 
@@ -92,6 +93,7 @@ create table if not exists public.payment_links (
 create index if not exists idx_conversations_account on public.conversations(account_id);
 create index if not exists idx_messages_conv on public.messages(conversation_id, created_at);
 create index if not exists idx_messages_conversation_id on public.messages(conversation_id);
+create index if not exists idx_messages_remote_id on public.messages(remote_id);
 create index if not exists idx_outbox_pending on public.outbox(sent, created_at);
 create index if not exists idx_outbox_account on public.outbox(account_id);
 create index if not exists idx_outbox_conversation on public.outbox(conversation_id);
