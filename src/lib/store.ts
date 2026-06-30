@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as sqlite from "./db";
-import { DEFAULT_QUICK_REPLIES, slugify, type Account, type Conversation, type ConversationMode, type CustomerProfile, type Message, type MessageRole, type OutboxItem, type PaymentLink, type PipelineStage, type QuickReply } from "./db";
+import { DEFAULT_QUICK_REPLIES, slugify, type Account, type BroadcastResult, type Conversation, type ConversationMode, type CustomerProfile, type Message, type MessageRole, type OutboxItem, type PaymentLink, type PipelineStage, type QuickReply, type Reminder } from "./db";
 import { DEFAULT_SYSTEM_PROMPT } from "./system-prompt";
 
 type MediaInput = { url: string; type: string } | null;
@@ -691,6 +691,130 @@ export async function markOutboxSent(id: number) {
   if (error) fail(error, "No se pudo marcar el mensaje como enviado");
 }
 
+function conversationHasLabel(conversation: Conversation, label: string) {
+  return (conversation.label || "")
+    .split("|")
+    .map((item) => item.trim())
+    .includes(label);
+}
+
+export async function enqueueBroadcast(
+  accountId: number,
+  input: { message: string; label?: string | null; pipelineStage?: PipelineStage | null; mode?: ConversationMode | null },
+): Promise<BroadcastResult> {
+  const message = input.message.trim();
+  if (!message) return { matched: 0, enqueued: 0 };
+
+  const client = await clientReady();
+  if (!client) return sqlite.enqueueBroadcast(accountId, input);
+
+  let conversations = await listConversations(accountId);
+  conversations = conversations.filter((conversation) => {
+    if (input.label && !conversationHasLabel(conversation, input.label)) return false;
+    if (input.pipelineStage && conversation.pipeline_stage !== input.pipelineStage) return false;
+    if (input.mode && conversation.mode !== input.mode) return false;
+    return true;
+  });
+
+  if (!conversations.length) return { matched: 0, enqueued: 0 };
+
+  const now = nowSeconds();
+  const messageRows = conversations.map((conversation) => ({
+    conversation_id: conversation.id,
+    role: "human",
+    content: message,
+    created_at: now,
+  }));
+  const outboxRows = conversations.map((conversation) => ({
+    account_id: accountId,
+    conversation_id: conversation.id,
+    phone: conversation.phone,
+    content: message,
+    created_at: now,
+  }));
+  const ids = conversations.map((conversation) => conversation.id);
+
+  const { error: messageError } = await client.from("messages").insert(messageRows);
+  if (messageError) fail(messageError, "No se pudo preparar la transmision");
+
+  const { error: outboxError } = await client.from("outbox").insert(outboxRows);
+  if (outboxError) fail(outboxError, "No se pudo poner en cola la transmision");
+
+  const { error: updateError } = await client.from("conversations").update({ last_message_at: now }).in("id", ids);
+  if (updateError) fail(updateError, "No se pudo actualizar la lista de chats");
+
+  return { matched: conversations.length, enqueued: conversations.length };
+}
+
+export async function createReminder(accountId: number, conversationId: number, message: string, dueAt: number): Promise<Reminder> {
+  const cleanMessage = message.trim();
+  if (!cleanMessage) throw new Error("Mensaje vacio");
+  const client = await clientReady();
+  if (!client) return sqlite.createReminder(accountId, conversationId, cleanMessage, dueAt);
+
+  const conversation = await getConversationById(conversationId);
+  if (!conversation || conversation.account_id !== accountId) throw new Error("Conversacion no encontrada");
+
+  const { data, error } = await client
+    .from("reminders")
+    .insert({ account_id: accountId, conversation_id: conversationId, message: cleanMessage, due_at: dueAt })
+    .select("*")
+    .single();
+  if (error) fail(error, "No se pudo crear el recordatorio");
+  return data as Reminder;
+}
+
+export async function listReminders(conversationId: number): Promise<Reminder[]> {
+  const client = await clientReady();
+  if (!client) return sqlite.listReminders(conversationId);
+  const { data, error } = await client
+    .from("reminders")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("due_at", { ascending: false })
+    .limit(20);
+  if (error) fail(error, "No se pudieron leer los recordatorios");
+  return (data || []) as Reminder[];
+}
+
+export async function cancelReminder(id: number) {
+  const client = await clientReady();
+  if (!client) return sqlite.cancelReminder(id);
+  const { error } = await client.from("reminders").update({ status: "cancelled" }).eq("id", id).eq("status", "pending");
+  if (error) fail(error, "No se pudo cancelar el recordatorio");
+}
+
+export async function processDueReminders(accountId: number, now = nowSeconds(), limit = 10): Promise<number> {
+  const client = await clientReady();
+  if (!client) return sqlite.processDueReminders(accountId, now, limit);
+
+  const { data, error } = await client
+    .from("reminders")
+    .select("*, conversations!inner(phone)")
+    .eq("account_id", accountId)
+    .eq("status", "pending")
+    .lte("due_at", now)
+    .order("due_at", { ascending: true })
+    .limit(limit);
+  if (error) fail(error, "No se pudieron leer los recordatorios pendientes");
+
+  const reminders = (data || []) as (Reminder & { conversations?: { phone?: string } })[];
+  for (const reminder of reminders) {
+    const phone = reminder.conversations?.phone;
+    if (!phone) continue;
+    await insertMessage(reminder.conversation_id, "human", reminder.message);
+    await enqueueOutbox(reminder.account_id, reminder.conversation_id, phone, reminder.message);
+    const { error: updateError } = await client
+      .from("reminders")
+      .update({ status: "sent", sent_at: now })
+      .eq("id", reminder.id)
+      .eq("status", "pending");
+    if (updateError) fail(updateError, "No se pudo marcar el recordatorio como enviado");
+  }
+
+  return reminders.length;
+}
+
 export async function createPaymentLink(input: {
   account_id: number;
   conversation_id: number;
@@ -821,4 +945,17 @@ export async function updateCustomerProfile(
   return getCustomerProfile(conversationId);
 }
 
-export type { Account, Conversation, ConversationMode, CustomerProfile, Message, MessageRole, OutboxItem, PaymentLink, PipelineStage, QuickReply };
+export type {
+  Account,
+  BroadcastResult,
+  Conversation,
+  ConversationMode,
+  CustomerProfile,
+  Message,
+  MessageRole,
+  OutboxItem,
+  PaymentLink,
+  PipelineStage,
+  QuickReply,
+  Reminder,
+};

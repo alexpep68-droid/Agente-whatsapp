@@ -68,6 +68,22 @@ export interface OutboxItem {
   created_at: number;
 }
 
+export interface Reminder {
+  id: number;
+  account_id: number;
+  conversation_id: number;
+  message: string;
+  due_at: number;
+  status: "pending" | "sent" | "cancelled";
+  created_at: number;
+  sent_at: number | null;
+}
+
+export interface BroadcastResult {
+  matched: number;
+  enqueued: number;
+}
+
 export interface QuickReply {
   id: number;
   account_id: number;
@@ -258,6 +274,20 @@ function getDb() {
     CREATE INDEX IF NOT EXISTS idx_outbox_pending
       ON outbox(sent, created_at);
 
+    CREATE TABLE IF NOT EXISTS reminders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      due_at INTEGER NOT NULL,
+      status TEXT CHECK(status IN ('pending','sent','cancelled')) NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      sent_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminders_due
+      ON reminders(account_id, status, due_at);
+
     CREATE TABLE IF NOT EXISTS account_restart (
       account_id INTEGER PRIMARY KEY,
       requested_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -344,6 +374,22 @@ function getDb() {
   if (!outboxColumnNames.has("media_type")) {
     db.prepare("ALTER TABLE outbox ADD COLUMN media_type TEXT").run();
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      due_at INTEGER NOT NULL,
+      status TEXT CHECK(status IN ('pending','sent','cancelled')) NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      sent_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_reminders_due
+      ON reminders(account_id, status, due_at);
+  `);
 
   const count = db.prepare("SELECT COUNT(*) AS total FROM accounts").get() as { total: number };
   if (count.total === 0) {
@@ -782,6 +828,105 @@ export function getPendingOutbox(accountId: number, limit = 20): OutboxItem[] {
 
 export function markOutboxSent(id: number) {
   getDb().prepare("UPDATE outbox SET sent = 1 WHERE id = ?").run(id);
+}
+
+function conversationHasLabel(conversation: Conversation, label: string) {
+  return (conversation.label || "")
+    .split("|")
+    .map((item) => item.trim())
+    .includes(label);
+}
+
+export function enqueueBroadcast(
+  accountId: number,
+  input: { message: string; label?: string | null; pipelineStage?: PipelineStage | null; mode?: ConversationMode | null },
+): BroadcastResult {
+  const message = input.message.trim();
+  if (!message) return { matched: 0, enqueued: 0 };
+
+  const conversations = listConversations(accountId).filter((conversation) => {
+    if (input.label && !conversationHasLabel(conversation, input.label)) return false;
+    if (input.pipelineStage && conversation.pipeline_stage !== input.pipelineStage) return false;
+    if (input.mode && conversation.mode !== input.mode) return false;
+    return true;
+  });
+
+  const db = getDb();
+  db.transaction(() => {
+    for (const conversation of conversations) {
+      const messageId = db
+        .prepare("INSERT INTO messages (conversation_id, role, content) VALUES (?, 'human', ?)")
+        .run(conversation.id, message);
+      db.prepare("UPDATE conversations SET last_message_at = unixepoch() WHERE id = ?").run(conversation.id);
+      db.prepare("INSERT INTO outbox (account_id, conversation_id, phone, content) VALUES (?, ?, ?, ?)").run(
+        accountId,
+        conversation.id,
+        conversation.phone,
+        message,
+      );
+      void messageId;
+    }
+  })();
+
+  return { matched: conversations.length, enqueued: conversations.length };
+}
+
+export function createReminder(accountId: number, conversationId: number, message: string, dueAt: number): Reminder {
+  const cleanMessage = message.trim();
+  if (!cleanMessage) throw new Error("Mensaje vacio");
+  const db = getDb();
+  const conversation = getConversationById(conversationId);
+  if (!conversation || conversation.account_id !== accountId) throw new Error("Conversacion no encontrada");
+
+  const result = db
+    .prepare("INSERT INTO reminders (account_id, conversation_id, message, due_at) VALUES (?, ?, ?, ?)")
+    .run(accountId, conversationId, cleanMessage, dueAt);
+  return db.prepare("SELECT * FROM reminders WHERE id = ?").get(result.lastInsertRowid) as Reminder;
+}
+
+export function listReminders(conversationId: number): Reminder[] {
+  return getDb()
+    .prepare("SELECT * FROM reminders WHERE conversation_id = ? ORDER BY due_at DESC LIMIT 20")
+    .all(conversationId) as Reminder[];
+}
+
+export function cancelReminder(id: number) {
+  getDb().prepare("UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'pending'").run(id);
+}
+
+export function processDueReminders(accountId: number, now = Math.floor(Date.now() / 1000), limit = 10): number {
+  const db = getDb();
+  const reminders = db
+    .prepare(
+      `
+        SELECT r.*, c.phone
+        FROM reminders r
+        JOIN conversations c ON c.id = r.conversation_id
+        WHERE r.account_id = ? AND r.status = 'pending' AND r.due_at <= ?
+        ORDER BY r.due_at ASC
+        LIMIT ?
+      `,
+    )
+    .all(accountId, now, limit) as (Reminder & { phone: string })[];
+
+  db.transaction(() => {
+    for (const reminder of reminders) {
+      db.prepare("INSERT INTO messages (conversation_id, role, content) VALUES (?, 'human', ?)").run(
+        reminder.conversation_id,
+        reminder.message,
+      );
+      db.prepare("UPDATE conversations SET last_message_at = ? WHERE id = ?").run(now, reminder.conversation_id);
+      db.prepare("INSERT INTO outbox (account_id, conversation_id, phone, content) VALUES (?, ?, ?, ?)").run(
+        accountId,
+        reminder.conversation_id,
+        reminder.phone,
+        reminder.message,
+      );
+      db.prepare("UPDATE reminders SET status = 'sent', sent_at = ? WHERE id = ?").run(now, reminder.id);
+    }
+  })();
+
+  return reminders.length;
 }
 
 export function createPaymentLink(input: {

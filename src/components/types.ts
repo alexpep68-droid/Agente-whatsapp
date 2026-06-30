@@ -60,3 +60,14 @@ export interface CustomerProfile {
   notes: string | null;
   updated_at: number;
 }
+
+export interface Reminder {
+  id: number;
+  account_id: number;
+  conversation_id: number;
+  message: string;
+  due_at: number;
+  status: "pending" | "sent" | "cancelled";
+  created_at: number;
+  sent_at: number | null;
+}

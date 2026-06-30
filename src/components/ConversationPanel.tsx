@@ -5,7 +5,7 @@ import { CHAT_LABELS, parseLabels, serializeLabels } from "./labels";
 import { MessageBubble } from "./MessageBubble";
 import { ModeToggle } from "./ModeToggle";
 import { PIPELINE_STAGES } from "./pipeline";
-import type { Conversation, ConversationMode, CustomerProfile, Message, PipelineStage } from "./types";
+import type { Conversation, ConversationMode, CustomerProfile, Message, PipelineStage, Reminder } from "./types";
 
 function chatLabel(value: string) {
   return value.replace("@s.whatsapp.net", "").replace("@lid", "");
@@ -38,6 +38,13 @@ interface QuickReplyDraft {
   text: string;
 }
 
+function defaultReminderDateTime() {
+  const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  date.setSeconds(0, 0);
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 export function ConversationPanel({
   conversation,
   onChanged,
@@ -53,11 +60,19 @@ export function ConversationPanel({
   const [showProfile, setShowProfile] = useState(false);
   const [showQuote, setShowQuote] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showReminder, setShowReminder] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [quickReplyDraft, setQuickReplyDraft] = useState<QuickReplyDraft | null>(null);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [profileDraft, setProfileDraft] = useState<CustomerProfile | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminderDraft, setReminderDraft] = useState({
+    dueAt: defaultReminderDateTime(),
+    message: "Hola, solo damos seguimiento a tu proyecto. ¿Hay algo mas en lo que podamos ayudarte?",
+  });
+  const [reminderError, setReminderError] = useState("");
+  const [savingReminder, setSavingReminder] = useState(false);
   const [paymentDraft, setPaymentDraft] = useState({ title: "Anticipo ALMALU", amount: "", note: "" });
   const [paymentError, setPaymentError] = useState("");
   const [creatingPayment, setCreatingPayment] = useState(false);
@@ -106,6 +121,12 @@ export function ConversationPanel({
     setSelectingMessages(false);
     setSelectedMessageIds([]);
     setSendError("");
+    setShowReminder(false);
+    setReminderError("");
+    setReminderDraft({
+      dueAt: defaultReminderDateTime(),
+      message: "Hola, solo damos seguimiento a tu proyecto. ¿Hay algo mas en lo que podamos ayudarte?",
+    });
   }, [conversation?.id, conversation?.label, conversation?.pipeline_stage]);
 
   useEffect(() => {
@@ -396,6 +417,46 @@ ALMALU`);
     setShowProfile(false);
   }
 
+  async function refreshReminders() {
+    if (!conversation) return;
+    const res = await fetch(`/api/reminders?conversationId=${conversation.id}`);
+    const json = (await res.json().catch(() => null)) as { reminders?: Reminder[] } | null;
+    setReminders(json?.reminders || []);
+  }
+
+  async function createReminder() {
+    if (!conversation || savingReminder) return;
+    setReminderError("");
+    setSavingReminder(true);
+    const dueAtMs = new Date(reminderDraft.dueAt).getTime();
+    const res = await fetch("/api/reminders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId: conversation.account_id,
+        conversationId: conversation.id,
+        dueAt: Math.floor(dueAtMs / 1000),
+        message: reminderDraft.message,
+      }),
+    });
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    setSavingReminder(false);
+    if (!res.ok) {
+      setReminderError(json?.error || "No se pudo crear el recordatorio");
+      return;
+    }
+    setReminderDraft({
+      dueAt: defaultReminderDateTime(),
+      message: "Hola, solo damos seguimiento a tu proyecto. ¿Hay algo mas en lo que podamos ayudarte?",
+    });
+    await refreshReminders();
+  }
+
+  async function cancelReminder(id: number) {
+    await fetch(`/api/reminders/${id}`, { method: "DELETE" });
+    await refreshReminders();
+  }
+
   async function createPayment() {
     if (!conversation || creatingPayment) return;
     setPaymentError("");
@@ -567,6 +628,17 @@ ALMALU`);
             type="button"
           >
             Cobro
+          </button>
+          <button
+            className="h-10 rounded-full border border-emerald-200 px-4 text-sm font-semibold text-emerald-800"
+            onClick={() => {
+              setReminderError("");
+              setShowReminder(true);
+              void refreshReminders();
+            }}
+            type="button"
+          >
+            Recordatorio
           </button>
           <div className="relative">
             <button
@@ -946,6 +1018,98 @@ ALMALU`);
                   Guardar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showReminder ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-200 p-5">
+              <div>
+                <h2 className="text-lg font-bold">Recordatorio</h2>
+                <p className="text-sm text-zinc-500">{title}</p>
+              </div>
+              <button
+                className="h-9 rounded border border-zinc-300 px-3 text-sm font-semibold"
+                onClick={() => setShowReminder(false)}
+                type="button"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto p-5">
+              <div className="grid gap-3">
+                <label className="block text-sm font-semibold">
+                  Fecha y hora
+                  <input
+                    className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                    onChange={(event) => setReminderDraft((current) => ({ ...current, dueAt: event.target.value }))}
+                    type="datetime-local"
+                    value={reminderDraft.dueAt}
+                  />
+                </label>
+                <label className="block text-sm font-semibold">
+                  Mensaje
+                  <textarea
+                    className="mt-1 h-36 w-full resize-none rounded border border-zinc-300 p-3 font-normal leading-relaxed outline-none focus:border-emerald-500"
+                    onChange={(event) => setReminderDraft((current) => ({ ...current, message: event.target.value }))}
+                    value={reminderDraft.message}
+                  />
+                </label>
+                {reminderError ? <div className="rounded bg-red-50 p-3 text-sm font-semibold text-red-700">{reminderError}</div> : null}
+              </div>
+              <div className="mt-5 border-t border-zinc-200 pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-semibold">Últimos recordatorios</h3>
+                  <button className="h-9 rounded border border-zinc-300 px-3 text-sm font-semibold" onClick={() => void refreshReminders()} type="button">
+                    Actualizar
+                  </button>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {reminders.map((reminder) => (
+                    <div key={reminder.id} className="flex items-start justify-between gap-3 rounded border border-zinc-200 p-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">
+                          {new Date(reminder.due_at * 1000).toLocaleString("es-MX", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })}
+                        </p>
+                        <p className="mt-1 line-clamp-2 text-sm text-zinc-600">{reminder.message}</p>
+                        <p className="mt-1 text-xs text-zinc-500">{reminder.status}</p>
+                      </div>
+                      {reminder.status === "pending" ? (
+                        <button
+                          className="h-9 rounded border border-red-200 px-3 text-sm font-semibold text-red-700"
+                          onClick={() => void cancelReminder(reminder.id)}
+                          type="button"
+                        >
+                          Cancelar
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                  {reminders.length === 0 ? <p className="rounded bg-zinc-50 p-3 text-sm text-zinc-500">No hay recordatorios para este chat.</p> : null}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-zinc-200 p-5">
+              <button
+                className="h-10 rounded border border-zinc-300 px-4 text-sm font-semibold"
+                onClick={() => setShowReminder(false)}
+                type="button"
+              >
+                Cerrar
+              </button>
+              <button
+                className="h-10 rounded bg-emerald-600 px-4 text-sm font-semibold text-white disabled:opacity-50"
+                disabled={savingReminder || !reminderDraft.message.trim()}
+                onClick={() => void createReminder()}
+                type="button"
+              >
+                {savingReminder ? "Guardando..." : "Guardar recordatorio"}
+              </button>
             </div>
           </div>
         </div>

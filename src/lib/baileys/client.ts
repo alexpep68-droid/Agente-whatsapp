@@ -10,7 +10,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import qrcodeTerminal from "qrcode-terminal";
-import { setAccountState, type Account } from "../store";
+import { processDueReminders, setAccountState, type Account } from "../store";
 import {
   flushOutbox,
   handleContactUpdate,
@@ -64,6 +64,13 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
   const outboxTimer = setInterval(() => {
     if (connected) void flushOutbox(accountId, sock);
   }, 2000);
+  const reminderTimer = setInterval(() => {
+    if (connected) {
+      void processDueReminders(accountId).catch((err) => {
+        console.error(`[bot:${accountId}] error procesando recordatorios`, err);
+      });
+    }
+  }, 10000);
 
   sock.ev.on("creds.update", saveCreds);
   sock.ev.on("messages.upsert", (event) => {
@@ -162,6 +169,7 @@ export async function startAccountBot(account: Account, onReconnect: (accountId:
     sock,
     shutdown: async (logout = false) => {
       clearInterval(outboxTimer);
+      clearInterval(reminderTimer);
       if (logout) {
         try {
           await sock.logout();

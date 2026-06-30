@@ -7,6 +7,7 @@ export function DashboardHeader({
   activeId,
   onSelect,
   onAdd,
+  onBroadcast,
   onSettings,
   onDisconnect,
 }: {
@@ -14,6 +15,7 @@ export function DashboardHeader({
   activeId: number | null;
   onSelect: (id: number) => void;
   onAdd: () => void;
+  onBroadcast: () => void;
   onSettings: () => void;
   onDisconnect: () => void;
 }) {
@@ -47,6 +49,9 @@ export function DashboardHeader({
         <span className={`rounded-full border px-3 py-1 font-semibold ${aiClass}`} title={active?.ai_error || aiLabel}>
           {aiLabel}
         </span>
+        <button className="rounded border border-white/40 px-3 py-1" onClick={onBroadcast} type="button">
+          Transmisión
+        </button>
         <button className="rounded border border-white/40 px-3 py-1" onClick={onSettings} type="button">
           Ajustes IA
         </button>
