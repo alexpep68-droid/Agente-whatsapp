@@ -51,11 +51,15 @@ export function ConversationPanel({
   const [showLabels, setShowLabels] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [quickReplyDraft, setQuickReplyDraft] = useState<QuickReplyDraft | null>(null);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [profileDraft, setProfileDraft] = useState<CustomerProfile | null>(null);
+  const [paymentDraft, setPaymentDraft] = useState({ title: "Anticipo ALMALU", amount: "", note: "" });
+  const [paymentError, setPaymentError] = useState("");
+  const [creatingPayment, setCreatingPayment] = useState(false);
   const [pipelineStage, setPipelineStageState] = useState<PipelineStage>("Nuevo cliente");
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
@@ -330,6 +334,31 @@ export function ConversationPanel({
     setShowProfile(false);
   }
 
+  async function createPayment() {
+    if (!conversation || creatingPayment) return;
+    setPaymentError("");
+    setCreatingPayment(true);
+    const res = await fetch("/api/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: conversation.id,
+        title: paymentDraft.title,
+        amount: Number(paymentDraft.amount),
+        note: paymentDraft.note,
+      }),
+    });
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    setCreatingPayment(false);
+    if (!res.ok) {
+      setPaymentError(json?.error || "No se pudo crear el cobro");
+      return;
+    }
+    setShowPayment(false);
+    setPaymentDraft({ title: "Anticipo ALMALU", amount: "", note: "" });
+    onChanged();
+  }
+
   function toggleLabel(name: string) {
     const nextLabels = labels.includes(name) ? labels.filter((label) => label !== name) : [...labels, name];
     void saveLabels(nextLabels);
@@ -388,6 +417,16 @@ export function ConversationPanel({
             type="button"
           >
             Ficha
+          </button>
+          <button
+            className="h-10 rounded-full border border-emerald-200 px-4 text-sm font-semibold text-emerald-800"
+            onClick={() => {
+              setPaymentError("");
+              setShowPayment(true);
+            }}
+            type="button"
+          >
+            Cobro
           </button>
           <div className="relative">
             <button
@@ -799,6 +838,73 @@ export function ConversationPanel({
                 type="button"
               >
                 Guardar ficha
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showPayment ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4">
+          <div className="w-full max-w-lg rounded-md bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold">Crear cobro</h2>
+                <p className="text-sm text-zinc-500">Se enviara un link de Mercado Pago a {title}.</p>
+              </div>
+              <button
+                className="h-9 rounded border border-zinc-300 px-3 text-sm font-semibold"
+                onClick={() => setShowPayment(false)}
+                type="button"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="mt-5 space-y-3">
+              <label className="block text-sm font-semibold">
+                Concepto
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setPaymentDraft((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Anticipo, liquidacion, visita tecnica..."
+                  value={paymentDraft.title}
+                />
+              </label>
+              <label className="block text-sm font-semibold">
+                Monto
+                <input
+                  className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal outline-none focus:border-emerald-500"
+                  inputMode="decimal"
+                  onChange={(event) => setPaymentDraft((current) => ({ ...current, amount: event.target.value }))}
+                  placeholder="Ej. 5000"
+                  value={paymentDraft.amount}
+                />
+              </label>
+              <label className="block text-sm font-semibold">
+                Nota opcional
+                <textarea
+                  className="mt-1 h-24 w-full resize-none rounded border border-zinc-300 p-3 font-normal outline-none focus:border-emerald-500"
+                  onChange={(event) => setPaymentDraft((current) => ({ ...current, note: event.target.value }))}
+                  placeholder="Ej. Anticipo para iniciar fabricacion de cocina integral."
+                  value={paymentDraft.note}
+                />
+              </label>
+              {paymentError ? <p className="rounded bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{paymentError}</p> : null}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="h-10 rounded border border-zinc-300 px-4 text-sm font-semibold"
+                onClick={() => setShowPayment(false)}
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                className="h-10 rounded bg-emerald-600 px-4 text-sm font-semibold text-white disabled:opacity-60"
+                disabled={creatingPayment}
+                onClick={() => void createPayment()}
+                type="button"
+              >
+                {creatingPayment ? "Creando..." : "Crear y enviar"}
               </button>
             </div>
           </div>

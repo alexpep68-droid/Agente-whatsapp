@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as sqlite from "./db";
-import { DEFAULT_QUICK_REPLIES, slugify, type Account, type Conversation, type ConversationMode, type CustomerProfile, type Message, type MessageRole, type OutboxItem, type PipelineStage, type QuickReply } from "./db";
+import { DEFAULT_QUICK_REPLIES, slugify, type Account, type Conversation, type ConversationMode, type CustomerProfile, type Message, type MessageRole, type OutboxItem, type PaymentLink, type PipelineStage, type QuickReply } from "./db";
 import { DEFAULT_SYSTEM_PROMPT } from "./system-prompt";
 
 type MediaInput = { url: string; type: string } | null;
@@ -396,6 +396,36 @@ export async function markOutboxSent(id: number) {
   if (error) fail(error, "No se pudo marcar el mensaje como enviado");
 }
 
+export async function createPaymentLink(input: {
+  account_id: number;
+  conversation_id: number;
+  preference_id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  init_point: string;
+  status?: string;
+}): Promise<PaymentLink> {
+  const client = await clientReady();
+  if (!client) return sqlite.createPaymentLink(input);
+  const { data, error } = await client
+    .from("payment_links")
+    .insert({
+      account_id: input.account_id,
+      conversation_id: input.conversation_id,
+      preference_id: input.preference_id,
+      title: input.title,
+      amount: input.amount,
+      currency: input.currency,
+      init_point: input.init_point,
+      status: input.status || "pending",
+    })
+    .select("*")
+    .single();
+  if (error) fail(error, "No se pudo guardar el link de pago");
+  return data as PaymentLink;
+}
+
 export async function deleteConversation(id: number) {
   const client = await clientReady();
   if (!client) return sqlite.deleteConversation(id);
@@ -496,4 +526,4 @@ export async function updateCustomerProfile(
   return getCustomerProfile(conversationId);
 }
 
-export type { Account, Conversation, ConversationMode, CustomerProfile, Message, MessageRole, OutboxItem, PipelineStage, QuickReply };
+export type { Account, Conversation, ConversationMode, CustomerProfile, Message, MessageRole, OutboxItem, PaymentLink, PipelineStage, QuickReply };

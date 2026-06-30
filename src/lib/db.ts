@@ -88,6 +88,20 @@ export interface CustomerProfile {
   updated_at: number;
 }
 
+export interface PaymentLink {
+  id: number;
+  account_id: number;
+  conversation_id: number;
+  preference_id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  status: string;
+  init_point: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export const DEFAULT_QUICK_REPLIES = [
   {
     title: "Inicio",
@@ -269,6 +283,23 @@ function getDb() {
       notes TEXT,
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS payment_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      preference_id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'MXN',
+      status TEXT NOT NULL DEFAULT 'pending',
+      init_point TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_payment_links_conversation
+      ON payment_links(conversation_id, created_at);
   `);
 
   const conversationColumns = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
@@ -521,6 +552,36 @@ export function getPendingOutbox(accountId: number, limit = 20): OutboxItem[] {
 
 export function markOutboxSent(id: number) {
   getDb().prepare("UPDATE outbox SET sent = 1 WHERE id = ?").run(id);
+}
+
+export function createPaymentLink(input: {
+  account_id: number;
+  conversation_id: number;
+  preference_id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  init_point: string;
+  status?: string;
+}): PaymentLink {
+  const db = getDb();
+  const result = db
+    .prepare(
+      `INSERT INTO payment_links
+        (account_id, conversation_id, preference_id, title, amount, currency, init_point, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.account_id,
+      input.conversation_id,
+      input.preference_id,
+      input.title,
+      input.amount,
+      input.currency,
+      input.init_point,
+      input.status || "pending",
+    );
+  return db.prepare("SELECT * FROM payment_links WHERE id = ?").get(result.lastInsertRowid) as PaymentLink;
 }
 
 export function deleteConversation(id: number) {
