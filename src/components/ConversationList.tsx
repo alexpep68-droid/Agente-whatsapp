@@ -31,6 +31,11 @@ function chatLabel(value: string) {
   return value.replace("@s.whatsapp.net", "").replace("@lid", "");
 }
 
+function displayContactId(value: string) {
+  const label = chatLabel(value);
+  return value.includes("@lid") ? `ID WhatsApp ${label}` : `+${label}`;
+}
+
 export function ConversationList({
   conversations,
   selectedId,
@@ -64,6 +69,7 @@ export function ConversationList({
           [
             conversation.name,
             chatLabel(conversation.phone),
+            displayContactId(conversation.phone),
             conversation.phone,
             conversation.last_message_preview,
             conversation.pipeline_stage,
@@ -180,7 +186,7 @@ export function ConversationList({
           </div>
         ) : null}
         {filtered.map((conversation) => {
-          const title = conversation.name || `+${chatLabel(conversation.phone)}`;
+          const title = conversation.name || displayContactId(conversation.phone);
           const labels = parseLabels(conversation.label);
           return (
             <button

@@ -57,13 +57,23 @@ function latestConversationTime(conversation: Conversation) {
   return conversation.last_message_at ?? conversation.created_at ?? 0;
 }
 
+function phonePriority(phone: string) {
+  if (phone.includes("@s.whatsapp.net")) return 2;
+  if (phone.includes("@lid")) return 1;
+  return 0;
+}
+
 function pickCanonicalConversation(conversations: Conversation[]) {
   return [...conversations].sort((left, right) => {
-    const leftIsPhone = left.phone.includes("@s.whatsapp.net") ? 1 : 0;
-    const rightIsPhone = right.phone.includes("@s.whatsapp.net") ? 1 : 0;
-    if (leftIsPhone !== rightIsPhone) return rightIsPhone - leftIsPhone;
+    const leftPriority = phonePriority(left.phone);
+    const rightPriority = phonePriority(right.phone);
+    if (leftPriority !== rightPriority) return rightPriority - leftPriority;
     return latestConversationTime(right) - latestConversationTime(left);
   })[0];
+}
+
+function pickCanonicalPhone(phones: string[]) {
+  return [...phones].sort((left, right) => phonePriority(right) - phonePriority(left))[0];
 }
 
 function coalesceText<T extends string | null>(primary: T, fallback: T) {
@@ -341,16 +351,20 @@ export async function consumeAccountRestarts(): Promise<number[]> {
   return (data || []).map((row) => Number(row.account_id));
 }
 
-export async function getOrCreateConversation(accountId: number, phone: string, name?: string): Promise<Conversation> {
+export async function getOrCreateConversation(accountId: number, phone: string, name?: string, aliases: string[] = []): Promise<Conversation> {
+  const phones = Array.from(new Set([phone, ...aliases].map((value) => value.trim()).filter(Boolean)));
   const client = await clientReady();
-  if (!client) return sqlite.getOrCreateConversation(accountId, phone, name);
-  const { data: found, error } = await client
+  if (!client) return sqlite.getOrCreateConversation(accountId, phone, name, phones);
+
+  await mergeConversationDuplicates(client, accountId, phones, { name });
+
+  const { data: foundRows, error } = await client
     .from("conversations")
     .select("*")
     .eq("account_id", accountId)
-    .eq("phone", phone)
-    .maybeSingle();
+    .in("phone", phones);
   if (error) fail(error, "No se pudo leer la conversacion");
+  const found = foundRows?.length ? pickCanonicalConversation(foundRows as Conversation[]) : null;
   if (found) {
     if (name && found.name !== name) {
       const { data, error: updateError } = await client
@@ -365,19 +379,21 @@ export async function getOrCreateConversation(accountId: number, phone: string, 
     return found as Conversation;
   }
 
+  const canonicalPhone = pickCanonicalPhone(phones) || phone;
   const { data, error: insertError } = await client
     .from("conversations")
-    .insert({ account_id: accountId, phone, name: name ?? null })
+    .insert({ account_id: accountId, phone: canonicalPhone, name: name ?? null })
     .select("*")
     .single();
   if (insertError) {
-    const { data: existing, error: refetchError } = await client
+    const { data: existingRows, error: refetchError } = await client
       .from("conversations")
       .select("*")
       .eq("account_id", accountId)
-      .eq("phone", phone)
-      .single();
+      .in("phone", phones);
     if (refetchError) fail(insertError, "No se pudo crear la conversacion");
+    const existing = existingRows?.length ? pickCanonicalConversation(existingRows as Conversation[]) : null;
+    if (!existing) fail(insertError, "No se pudo crear la conversacion");
     return existing as Conversation;
   }
   return data as Conversation;

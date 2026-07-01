@@ -27,6 +27,15 @@ function phoneFromJid(jid: string) {
   return jid;
 }
 
+function messageKeyJids(msg: proto.IWebMessageInfo) {
+  const key = msg.key as Record<string, unknown>;
+  return uniquePhones(
+    [key.remoteJid, key.remoteJidAlt, key.participant, key.participantAlt].filter(
+      (value): value is string => typeof value === "string" && isSupportedChatJid(value),
+    ),
+  );
+}
+
 function candidateContactPhones(contact: { id?: string; jid?: string; lid?: string }) {
   return [contact.id, contact.jid, contact.lid].filter((value): value is string => Boolean(value && isSupportedChatJid(value)));
 }
@@ -40,11 +49,17 @@ function bestContactName(contact: { name?: string | null; notify?: string | null
 }
 
 async function maybeUpdateConversationAvatar(accountId: number, sock: WASocket, jid: string, phones = [jid]) {
-  try {
-    const avatarUrl = await sock.profilePictureUrl(jid, "image");
-    if (avatarUrl) await updateConversationContact(accountId, uniquePhones(phones), { avatarUrl });
-  } catch {
-    // WhatsApp may hide profile pictures by privacy settings; keep the initials fallback.
+  const candidates = uniquePhones([jid, ...phones]);
+  for (const candidate of candidates) {
+    try {
+      const avatarUrl = await sock.profilePictureUrl(candidate, "image");
+      if (avatarUrl) {
+        await updateConversationContact(accountId, candidates, { avatarUrl });
+        return;
+      }
+    } catch {
+      // WhatsApp may hide profile pictures by privacy settings; try the next known alias.
+    }
   }
 }
 
@@ -266,7 +281,8 @@ export async function handleIncomingMessage(
     return;
   }
 
-  const phone = phoneFromJid(remoteJid);
+  const phones = messageKeyJids(msg);
+  const phone = phoneFromJid(phones[0] || remoteJid);
   if (msg.key.fromMe && consumeBotEcho(accountId, remoteJid, text)) {
     console.log(`[bot:${accountId}] eco de IA ignorado ${phone}`);
     return;
@@ -275,13 +291,13 @@ export async function handleIncomingMessage(
   const role = msg.key.fromMe ? "human" : "user";
   console.log(`[bot:${accountId}] <- Mensaje ${role} ${phone}: "${text.slice(0, 120)}"`);
 
-  const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined);
+  const convo = await getOrCreateConversation(accountId, phone, msg.key.fromMe ? undefined : msg.pushName ?? undefined, phones);
   if (msg.key.fromMe && (await isRecentOutgoingDuplicate(convo.id, text))) {
     console.log(`[bot:${accountId}] eco saliente ignorado ${phone}`);
     return;
   }
   if (!msg.key.fromMe && !convo.avatar_url) {
-    void maybeUpdateConversationAvatar(accountId, sock, remoteJid);
+    void maybeUpdateConversationAvatar(accountId, sock, remoteJid, phones);
   }
   await insertMessage(convo.id, role, text, attachment, msg.key.id || null);
 

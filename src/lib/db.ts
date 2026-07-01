@@ -514,21 +514,28 @@ export function consumeAccountRestarts(): number[] {
   return rows.map((row) => row.account_id);
 }
 
-export function getOrCreateConversation(accountId: number, phone: string, name?: string): Conversation {
+export function getOrCreateConversation(accountId: number, phone: string, name?: string, aliases: string[] = []): Conversation {
   const db = getDb();
+  const phones = Array.from(new Set([phone, ...aliases].map((value) => value.trim()).filter(Boolean)));
+
+  mergeConversationDuplicates(accountId, phones, { name });
+
+  const placeholders = phones.map(() => "?").join(",");
   const found = db
-    .prepare("SELECT * FROM conversations WHERE account_id = ? AND phone = ?")
-    .get(accountId, phone) as Conversation | undefined;
-  if (found) {
-    if (name && found.name !== name) {
-      db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(name, found.id);
-      return getConversationById(found.id)!;
+    .prepare(`SELECT * FROM conversations WHERE account_id = ? AND phone IN (${placeholders})`)
+    .all(accountId, ...phones) as Conversation[];
+  const current = found.length ? pickCanonicalConversation(found) : undefined;
+  if (current) {
+    if (name && current.name !== name) {
+      db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(name, current.id);
+      return getConversationById(current.id)!;
     }
-    return found;
+    return current;
   }
+  const canonicalPhone = pickCanonicalPhone(phones) || phone;
   const result = db
     .prepare("INSERT INTO conversations (account_id, phone, name) VALUES (?, ?, ?)")
-    .run(accountId, phone, name ?? null);
+    .run(accountId, canonicalPhone, name ?? null);
   return getConversationById(Number(result.lastInsertRowid))!;
 }
 
@@ -556,13 +563,23 @@ function latestConversationTime(conversation: Conversation) {
   return conversation.last_message_at ?? conversation.created_at ?? 0;
 }
 
+function phonePriority(phone: string) {
+  if (phone.includes("@s.whatsapp.net")) return 2;
+  if (phone.includes("@lid")) return 1;
+  return 0;
+}
+
 function pickCanonicalConversation(conversations: Conversation[]) {
   return [...conversations].sort((left, right) => {
-    const leftIsPhone = left.phone.includes("@s.whatsapp.net") ? 1 : 0;
-    const rightIsPhone = right.phone.includes("@s.whatsapp.net") ? 1 : 0;
-    if (leftIsPhone !== rightIsPhone) return rightIsPhone - leftIsPhone;
+    const leftPriority = phonePriority(left.phone);
+    const rightPriority = phonePriority(right.phone);
+    if (leftPriority !== rightPriority) return rightPriority - leftPriority;
     return latestConversationTime(right) - latestConversationTime(left);
   })[0];
+}
+
+function pickCanonicalPhone(phones: string[]) {
+  return [...phones].sort((left, right) => phonePriority(right) - phonePriority(left))[0];
 }
 
 function coalesceText<T extends string | null>(primary: T, fallback: T) {

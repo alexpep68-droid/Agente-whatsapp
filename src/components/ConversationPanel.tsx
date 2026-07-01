@@ -11,6 +11,11 @@ function chatLabel(value: string) {
   return value.replace("@s.whatsapp.net", "").replace("@lid", "");
 }
 
+function displayContactId(value: string) {
+  const label = chatLabel(value);
+  return value.includes("@lid") ? `ID WhatsApp ${label}` : `+${label}`;
+}
+
 function emptyProfile(conversationId: number): CustomerProfile {
   return {
     conversation_id: conversationId,
@@ -565,7 +570,7 @@ ALMALU`);
     );
   }
 
-  const title = conversation.name || `+${chatLabel(conversation.phone)}`;
+  const title = conversation.name || displayContactId(conversation.phone);
   const humanMode = conversation.mode === "HUMAN";
   const draftRows = Math.min(8, Math.max(1, draft.split("\n").length + Math.floor(draft.length / 95)));
   const draftHeight = Math.max(48, draftRows * 24 + 24);
@@ -575,7 +580,7 @@ ALMALU`);
       <header className="flex h-16 items-center justify-between border-b border-zinc-200 bg-white px-5">
         <div className="min-w-0">
           <h2 className="truncate font-semibold">{title}</h2>
-          <p className="text-xs text-zinc-500">+{chatLabel(conversation.phone)}</p>
+          <p className="text-xs text-zinc-500">{displayContactId(conversation.phone)}</p>
         </div>
         <div className="flex items-center gap-3">
           <select
