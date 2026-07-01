@@ -16,6 +16,24 @@ interface Status {
   phone: string | null;
 }
 
+function delayLabel(amount: string, unit: string) {
+  const value = Math.max(1, Number(amount) || 1);
+  if (unit === "minutes") return `${value} ${value === 1 ? "minuto" : "minutos"}`;
+  return `${value} ${value === 1 ? "segundo" : "segundos"}`;
+}
+
+function scheduledLabel(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("es-MX", {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  });
+}
+
 export function ConnectionGate() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -32,6 +50,10 @@ export function ConnectionGate() {
     pipelineStage: "",
     mode: "",
     message: "",
+    sendPacing: "immediate",
+    delayAmount: "1",
+    delayUnit: "minutes",
+    startAt: "",
   });
   const [broadcastError, setBroadcastError] = useState("");
   const [broadcastResult, setBroadcastResult] = useState("");
@@ -111,8 +133,22 @@ export function ConnectionGate() {
 
   async function sendBroadcast() {
     if (!activeId) return;
+    const delayAmount = Math.max(0, Number(broadcastDraft.delayAmount) || 0);
+    const delaySeconds =
+      broadcastDraft.sendPacing === "paced"
+        ? Math.min(24 * 60 * 60, Math.floor(delayAmount * (broadcastDraft.delayUnit === "minutes" ? 60 : 1)))
+        : 0;
+    const startAt = broadcastDraft.startAt ? Math.floor(new Date(broadcastDraft.startAt).getTime() / 1000) : 0;
     setBroadcastError("");
     setBroadcastResult("");
+    if (broadcastDraft.sendPacing === "paced" && delaySeconds <= 0) {
+      setBroadcastError("Indica un tiempo mayor a cero entre cada mensaje.");
+      return;
+    }
+    if (broadcastDraft.startAt && !Number.isFinite(startAt)) {
+      setBroadcastError("Selecciona una fecha y hora valida para iniciar.");
+      return;
+    }
     setSendingBroadcast(true);
     try {
       const res = await fetch("/api/broadcasts", {
@@ -124,6 +160,8 @@ export function ConnectionGate() {
           label: broadcastDraft.label || null,
           pipelineStage: (broadcastDraft.pipelineStage || null) as PipelineStage | null,
           mode: (broadcastDraft.mode || null) as ConversationMode | null,
+          delaySeconds,
+          startAt,
         }),
       });
       const json = (await res.json()) as { error?: string; matched?: number; enqueued?: number };
@@ -131,7 +169,14 @@ export function ConnectionGate() {
         setBroadcastError(json.error || "No se pudo crear la transmision");
         return;
       }
-      setBroadcastResult(`Lista: ${json.enqueued || 0} de ${json.matched || 0} clientes quedaron en cola.`);
+      const pacingText =
+        delaySeconds > 0
+          ? ` Se enviaran uno por uno cada ${delayLabel(broadcastDraft.delayAmount, broadcastDraft.delayUnit)}.`
+          : "";
+      const startText = scheduledLabel(broadcastDraft.startAt);
+      setBroadcastResult(
+        `Lista: ${json.enqueued || 0} de ${json.matched || 0} clientes quedaron en cola.${startText ? ` Inicia: ${startText}.` : ""}${pacingText}`,
+      );
       setBroadcastDraft((current) => ({ ...current, message: "" }));
       await loadConversations(activeId);
     } finally {
@@ -299,8 +344,59 @@ export function ConnectionGate() {
                   value={broadcastDraft.message}
                 />
               </label>
+              <div className="mt-4 rounded border border-zinc-200 p-3">
+                <p className="text-sm font-semibold">Forma de envio</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-[1fr_120px_140px]">
+                  <label className="block text-sm font-semibold">
+                    Ritmo
+                    <select
+                      className="mt-1 h-11 w-full rounded border border-zinc-300 bg-white px-3 font-normal"
+                      onChange={(event) => setBroadcastDraft((current) => ({ ...current, sendPacing: event.target.value }))}
+                      value={broadcastDraft.sendPacing}
+                    >
+                      <option value="immediate">Lo antes posible</option>
+                      <option value="paced">Uno por uno con pausa</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm font-semibold">
+                    Diferencia
+                    <input
+                      className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal disabled:bg-zinc-100 disabled:text-zinc-400"
+                      disabled={broadcastDraft.sendPacing !== "paced"}
+                      min="1"
+                      onChange={(event) => setBroadcastDraft((current) => ({ ...current, delayAmount: event.target.value }))}
+                      type="number"
+                      value={broadcastDraft.delayAmount}
+                    />
+                  </label>
+                  <label className="block text-sm font-semibold">
+                    Unidad
+                    <select
+                      className="mt-1 h-11 w-full rounded border border-zinc-300 bg-white px-3 font-normal disabled:bg-zinc-100 disabled:text-zinc-400"
+                      disabled={broadcastDraft.sendPacing !== "paced"}
+                      onChange={(event) => setBroadcastDraft((current) => ({ ...current, delayUnit: event.target.value }))}
+                      value={broadcastDraft.delayUnit}
+                    >
+                      <option value="seconds">Segundos</option>
+                      <option value="minutes">Minutos</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="mt-3 block text-sm font-semibold">
+                  Programar inicio
+                  <input
+                    className="mt-1 h-11 w-full rounded border border-zinc-300 px-3 font-normal"
+                    onChange={(event) => setBroadcastDraft((current) => ({ ...current, startAt: event.target.value }))}
+                    type="datetime-local"
+                    value={broadcastDraft.startAt}
+                  />
+                  <span className="mt-1 block text-xs font-normal text-zinc-500">
+                    Si lo dejas vacio, empieza en cuanto el bot tome la cola.
+                  </span>
+                </label>
+              </div>
               <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                Revisa bien el filtro antes de enviar. Los mensajes entran a la cola del bot y se mandan por WhatsApp.
+                Revisa bien el filtro antes de enviar. Los mensajes entran a la cola del bot y se mandan por WhatsApp segun el ritmo elegido.
               </div>
               {broadcastError ? <div className="mt-3 rounded bg-red-50 p-3 text-sm font-semibold text-red-700">{broadcastError}</div> : null}
               {broadcastResult ? <div className="mt-3 rounded bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{broadcastResult}</div> : null}

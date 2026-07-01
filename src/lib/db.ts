@@ -839,7 +839,12 @@ export function enqueueOutbox(
 
 export function getPendingOutbox(accountId: number, limit = 20): OutboxItem[] {
   return getDb()
-    .prepare("SELECT * FROM outbox WHERE account_id = ? AND sent = 0 ORDER BY created_at ASC LIMIT ?")
+    .prepare(
+      `SELECT * FROM outbox
+       WHERE account_id = ? AND sent = 0 AND created_at <= unixepoch()
+       ORDER BY created_at ASC
+       LIMIT ?`,
+    )
     .all(accountId, limit) as OutboxItem[];
 }
 
@@ -856,10 +861,18 @@ function conversationHasLabel(conversation: Conversation, label: string) {
 
 export function enqueueBroadcast(
   accountId: number,
-  input: { message: string; label?: string | null; pipelineStage?: PipelineStage | null; mode?: ConversationMode | null },
+  input: {
+    message: string;
+    label?: string | null;
+    pipelineStage?: PipelineStage | null;
+    mode?: ConversationMode | null;
+    delaySeconds?: number | null;
+    startAt?: number | null;
+  },
 ): BroadcastResult {
   const message = input.message.trim();
   if (!message) return { matched: 0, enqueued: 0 };
+  const delaySeconds = Math.max(0, Math.min(24 * 60 * 60, Math.floor(input.delaySeconds || 0)));
 
   const conversations = listConversations(accountId).filter((conversation) => {
     if (input.label && !conversationHasLabel(conversation, input.label)) return false;
@@ -869,17 +882,21 @@ export function enqueueBroadcast(
   });
 
   const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const startAt = Math.max(now, Math.floor(input.startAt || 0));
   db.transaction(() => {
-    for (const conversation of conversations) {
+    for (const [index, conversation] of conversations.entries()) {
+      const sendAt = startAt + (delaySeconds ? index * delaySeconds : 0);
       const messageId = db
         .prepare("INSERT INTO messages (conversation_id, role, content) VALUES (?, 'human', ?)")
         .run(conversation.id, message);
       db.prepare("UPDATE conversations SET last_message_at = unixepoch() WHERE id = ?").run(conversation.id);
-      db.prepare("INSERT INTO outbox (account_id, conversation_id, phone, content) VALUES (?, ?, ?, ?)").run(
+      db.prepare("INSERT INTO outbox (account_id, conversation_id, phone, content, created_at) VALUES (?, ?, ?, ?, ?)").run(
         accountId,
         conversation.id,
         conversation.phone,
         message,
+        sendAt,
       );
       void messageId;
     }

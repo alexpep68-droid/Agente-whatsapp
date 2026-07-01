@@ -694,6 +694,7 @@ export async function getPendingOutbox(accountId: number, limit = 20): Promise<O
     .select("*")
     .eq("account_id", accountId)
     .eq("sent", false)
+    .lte("created_at", nowSeconds())
     .order("created_at", { ascending: true })
     .limit(limit);
   if (error) fail(error, "No se pudo leer la bandeja de salida");
@@ -716,10 +717,18 @@ function conversationHasLabel(conversation: Conversation, label: string) {
 
 export async function enqueueBroadcast(
   accountId: number,
-  input: { message: string; label?: string | null; pipelineStage?: PipelineStage | null; mode?: ConversationMode | null },
+  input: {
+    message: string;
+    label?: string | null;
+    pipelineStage?: PipelineStage | null;
+    mode?: ConversationMode | null;
+    delaySeconds?: number | null;
+    startAt?: number | null;
+  },
 ): Promise<BroadcastResult> {
   const message = input.message.trim();
   if (!message) return { matched: 0, enqueued: 0 };
+  const delaySeconds = Math.max(0, Math.min(24 * 60 * 60, Math.floor(input.delaySeconds || 0)));
 
   const client = await clientReady();
   if (!client) return sqlite.enqueueBroadcast(accountId, input);
@@ -735,18 +744,19 @@ export async function enqueueBroadcast(
   if (!conversations.length) return { matched: 0, enqueued: 0 };
 
   const now = nowSeconds();
+  const startAt = Math.max(now, Math.floor(input.startAt || 0));
   const messageRows = conversations.map((conversation) => ({
     conversation_id: conversation.id,
     role: "human",
     content: message,
     created_at: now,
   }));
-  const outboxRows = conversations.map((conversation) => ({
+  const outboxRows = conversations.map((conversation, index) => ({
     account_id: accountId,
     conversation_id: conversation.id,
     phone: conversation.phone,
     content: message,
-    created_at: now,
+    created_at: startAt + (delaySeconds ? index * delaySeconds : 0),
   }));
   const ids = conversations.map((conversation) => conversation.id);
 

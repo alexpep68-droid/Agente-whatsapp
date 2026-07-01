@@ -8,6 +8,8 @@ export async function POST(req: NextRequest) {
     label?: string | null;
     pipelineStage?: PipelineStage | null;
     mode?: ConversationMode | null;
+    delaySeconds?: number | null;
+    startAt?: number | null;
   } | null;
 
   const accountId = Number(body?.accountId);
@@ -25,6 +27,8 @@ export async function POST(req: NextRequest) {
       label: body?.label?.trim() || null,
       pipelineStage: body?.pipelineStage || null,
       mode: body?.mode || null,
+      delaySeconds: Number(body?.delaySeconds || 0),
+      startAt: Number(body?.startAt || 0),
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
