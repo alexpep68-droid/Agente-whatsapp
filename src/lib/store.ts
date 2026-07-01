@@ -9,6 +9,7 @@ let supabaseClient: SupabaseClient | null = null;
 let seedPromise: Promise<void> | null = null;
 let messageRemoteIdSupported: boolean | null = null;
 let conversationAvatarSupported: boolean | null = null;
+let conversationAliasesSupported: boolean | null = null;
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
@@ -76,6 +77,76 @@ function pickCanonicalPhone(phones: string[]) {
   return [...phones].sort((left, right) => phonePriority(right) - phonePriority(left))[0];
 }
 
+function cleanAliases(aliases: string[]) {
+  return Array.from(new Set(aliases.map((alias) => alias.trim()).filter(Boolean)));
+}
+
+function isMissingConversationAliases(error: { message?: string }) {
+  return /conversation_aliases|schema cache|relation .* does not exist/i.test(error.message ?? "");
+}
+
+async function attachConversationAliases(client: SupabaseClient, accountId: number, conversationId: number, aliases: string[]) {
+  if (conversationAliasesSupported === false) return;
+  const clean = cleanAliases(aliases);
+  if (!clean.length) return;
+
+  const { error } = await client.from("conversation_aliases").upsert(
+    clean.map((alias) => ({ account_id: accountId, conversation_id: conversationId, alias })),
+    { onConflict: "account_id,alias" },
+  );
+  if (error) {
+    if (isMissingConversationAliases(error)) {
+      conversationAliasesSupported = false;
+      return;
+    }
+    fail(error, "No se pudieron guardar los identificadores del contacto");
+  }
+  conversationAliasesSupported = true;
+}
+
+async function findConversationsByAliases(client: SupabaseClient, accountId: number, aliases: string[]) {
+  const clean = cleanAliases(aliases);
+  if (!clean.length) return [] as Conversation[];
+
+  const conversationsById = new Map<number, Conversation>();
+  const { data: phoneRows, error: phoneError } = await client
+    .from("conversations")
+    .select("*")
+    .eq("account_id", accountId)
+    .in("phone", clean);
+  if (phoneError) fail(phoneError, "No se pudieron leer los chats");
+  for (const row of (phoneRows || []) as Conversation[]) conversationsById.set(row.id, row);
+
+  if (conversationAliasesSupported !== false) {
+    const { data: aliasRows, error: aliasError } = await client
+      .from("conversation_aliases")
+      .select("conversation_id")
+      .eq("account_id", accountId)
+      .in("alias", clean);
+    if (aliasError) {
+      if (isMissingConversationAliases(aliasError)) {
+        conversationAliasesSupported = false;
+      } else {
+        fail(aliasError, "No se pudieron leer los identificadores del contacto");
+      }
+    } else {
+      conversationAliasesSupported = true;
+      const ids = Array.from(new Set((aliasRows || []).map((row) => Number(row.conversation_id)).filter(Boolean)));
+      if (ids.length) {
+        const { data: aliasConversations, error: conversationsError } = await client
+          .from("conversations")
+          .select("*")
+          .eq("account_id", accountId)
+          .in("id", ids);
+        if (conversationsError) fail(conversationsError, "No se pudieron leer los chats por identificador");
+        for (const row of (aliasConversations || []) as Conversation[]) conversationsById.set(row.id, row);
+      }
+    }
+  }
+
+  return Array.from(conversationsById.values());
+}
+
 function coalesceText<T extends string | null>(primary: T, fallback: T) {
   return hasText(primary) ? primary : fallback;
 }
@@ -125,10 +196,7 @@ async function mergeConversationDuplicates(
   phones: string[],
   input: { name?: string | null; avatarUrl?: string | null },
 ) {
-  const { data, error } = await client.from("conversations").select("*").eq("account_id", accountId).in("phone", phones);
-  if (error) fail(error, "No se pudieron leer los chats duplicados");
-
-  const conversations = (data || []) as Conversation[];
+  const conversations = await findConversationsByAliases(client, accountId, phones);
   if (conversations.length <= 1) return;
 
   const target = pickCanonicalConversation(conversations);
@@ -169,6 +237,26 @@ async function mergeConversationDuplicates(
       .eq("conversation_id", source.id);
     if (outboxError) fail(outboxError, "No se pudieron mover los envios pendientes del chat duplicado");
 
+    if (conversationAliasesSupported !== false) {
+      const { data: sourceAliases, error: sourceAliasesError } = await client
+        .from("conversation_aliases")
+        .select("alias")
+        .eq("conversation_id", source.id);
+      if (sourceAliasesError) {
+        if (isMissingConversationAliases(sourceAliasesError)) conversationAliasesSupported = false;
+        else fail(sourceAliasesError, "No se pudieron leer los identificadores duplicados");
+      } else {
+        await attachConversationAliases(
+          client,
+          accountId,
+          target.id,
+          (sourceAliases || []).map((row) => String(row.alias)),
+        );
+        const { error: aliasDeleteError } = await client.from("conversation_aliases").delete().eq("conversation_id", source.id);
+        if (aliasDeleteError) fail(aliasDeleteError, "No se pudieron limpiar los identificadores duplicados");
+      }
+    }
+
     const { error: deleteError } = await client.from("conversations").delete().eq("id", source.id);
     if (deleteError) fail(deleteError, "No se pudo borrar el chat duplicado");
   }
@@ -193,6 +281,7 @@ async function mergeConversationDuplicates(
     }
     fail(updateError, "No se pudo actualizar el chat unido");
   }
+  await attachConversationAliases(client, accountId, target.id, phones);
 }
 
 async function seedSupabase(client: SupabaseClient) {
@@ -358,14 +447,10 @@ export async function getOrCreateConversation(accountId: number, phone: string, 
 
   await mergeConversationDuplicates(client, accountId, phones, { name });
 
-  const { data: foundRows, error } = await client
-    .from("conversations")
-    .select("*")
-    .eq("account_id", accountId)
-    .in("phone", phones);
-  if (error) fail(error, "No se pudo leer la conversacion");
-  const found = foundRows?.length ? pickCanonicalConversation(foundRows as Conversation[]) : null;
+  const foundRows = await findConversationsByAliases(client, accountId, phones);
+  const found = foundRows.length ? pickCanonicalConversation(foundRows) : null;
   if (found) {
+    await attachConversationAliases(client, accountId, found.id, phones);
     if (name && found.name !== name) {
       const { data, error: updateError } = await client
         .from("conversations")
@@ -394,8 +479,10 @@ export async function getOrCreateConversation(accountId: number, phone: string, 
     if (refetchError) fail(insertError, "No se pudo crear la conversacion");
     const existing = existingRows?.length ? pickCanonicalConversation(existingRows as Conversation[]) : null;
     if (!existing) fail(insertError, "No se pudo crear la conversacion");
+    await attachConversationAliases(client, accountId, existing.id, phones);
     return existing as Conversation;
   }
+  await attachConversationAliases(client, accountId, Number(data.id), phones);
   return data as Conversation;
 }
 
@@ -451,26 +538,29 @@ export async function updateConversationContact(
   const client = await clientReady();
   if (!client) return sqlite.updateConversationContact(accountId, cleanPhones, { name: cleanName, avatarUrl: cleanAvatarUrl });
   await mergeConversationDuplicates(client, accountId, cleanPhones, { name: cleanName, avatarUrl: cleanAvatarUrl });
+  const matchedConversations = await findConversationsByAliases(client, accountId, cleanPhones);
+  if (matchedConversations.length) {
+    await attachConversationAliases(client, accountId, pickCanonicalConversation(matchedConversations).id, cleanPhones);
+  }
 
   const update: Record<string, unknown> = {};
   if (cleanName) update.name = cleanName;
   if (cleanAvatarUrl && conversationAvatarSupported !== false) update.avatar_url = cleanAvatarUrl;
   if (!Object.keys(update).length) return;
 
-  const { error } = await client
-    .from("conversations")
-    .update(update)
-    .eq("account_id", accountId)
-    .in("phone", cleanPhones);
+  const matchedIds = matchedConversations.map((conversation) => conversation.id);
+  const updateQuery = client.from("conversations").update(update);
+  const { error } = matchedIds.length
+    ? await updateQuery.in("id", matchedIds)
+    : await updateQuery.eq("account_id", accountId).in("phone", cleanPhones);
   if (error) {
     if (cleanAvatarUrl && /avatar_url/i.test(error.message)) {
       conversationAvatarSupported = false;
       if (cleanName) {
-        const { error: nameError } = await client
-          .from("conversations")
-          .update({ name: cleanName })
-          .eq("account_id", accountId)
-          .in("phone", cleanPhones);
+        const nameQuery = client.from("conversations").update({ name: cleanName });
+        const { error: nameError } = matchedIds.length
+          ? await nameQuery.in("id", matchedIds)
+          : await nameQuery.eq("account_id", accountId).in("phone", cleanPhones);
         if (nameError) fail(nameError, "No se pudo actualizar el nombre del contacto");
       }
       return;

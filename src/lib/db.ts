@@ -245,6 +245,18 @@ function getDb() {
       UNIQUE(account_id, phone)
     );
 
+    CREATE TABLE IF NOT EXISTS conversation_aliases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      alias TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(account_id, alias)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_conversation_aliases_conversation
+      ON conversation_aliases(conversation_id);
+
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -344,6 +356,11 @@ function getDb() {
   if (!conversationColumnNames.has("avatar_url")) {
     db.prepare("ALTER TABLE conversations ADD COLUMN avatar_url TEXT").run();
   }
+  db.prepare(
+    `INSERT OR IGNORE INTO conversation_aliases (account_id, conversation_id, alias)
+     SELECT account_id, id, phone
+     FROM conversations`,
+  ).run();
 
   const accountColumns = db.prepare("PRAGMA table_info(accounts)").all() as { name: string }[];
   const accountColumnNames = new Set(accountColumns.map((column) => column.name));
@@ -520,12 +537,10 @@ export function getOrCreateConversation(accountId: number, phone: string, name?:
 
   mergeConversationDuplicates(accountId, phones, { name });
 
-  const placeholders = phones.map(() => "?").join(",");
-  const found = db
-    .prepare(`SELECT * FROM conversations WHERE account_id = ? AND phone IN (${placeholders})`)
-    .all(accountId, ...phones) as Conversation[];
+  const found = findConversationsByAliases(db, accountId, phones);
   const current = found.length ? pickCanonicalConversation(found) : undefined;
   if (current) {
+    attachConversationAliases(db, accountId, current.id, phones);
     if (name && current.name !== name) {
       db.prepare("UPDATE conversations SET name = ? WHERE id = ?").run(name, current.id);
       return getConversationById(current.id)!;
@@ -536,7 +551,9 @@ export function getOrCreateConversation(accountId: number, phone: string, name?:
   const result = db
     .prepare("INSERT INTO conversations (account_id, phone, name) VALUES (?, ?, ?)")
     .run(accountId, canonicalPhone, name ?? null);
-  return getConversationById(Number(result.lastInsertRowid))!;
+  const conversationId = Number(result.lastInsertRowid);
+  attachConversationAliases(db, accountId, conversationId, phones);
+  return getConversationById(conversationId)!;
 }
 
 export function updateConversationName(accountId: number, phone: string, name: string) {
@@ -580,6 +597,33 @@ function pickCanonicalConversation(conversations: Conversation[]) {
 
 function pickCanonicalPhone(phones: string[]) {
   return [...phones].sort((left, right) => phonePriority(right) - phonePriority(left))[0];
+}
+
+function attachConversationAliases(db: Database.Database, accountId: number, conversationId: number, aliases: string[]) {
+  const cleanAliases = Array.from(new Set(aliases.map((alias) => alias.trim()).filter(Boolean)));
+  const insert = db.prepare(
+    `INSERT INTO conversation_aliases (account_id, conversation_id, alias)
+     VALUES (?, ?, ?)
+     ON CONFLICT(account_id, alias) DO UPDATE SET conversation_id = excluded.conversation_id`,
+  );
+  for (const alias of cleanAliases) insert.run(accountId, conversationId, alias);
+}
+
+function findConversationsByAliases(db: Database.Database, accountId: number, aliases: string[]) {
+  const cleanAliases = Array.from(new Set(aliases.map((alias) => alias.trim()).filter(Boolean)));
+  if (!cleanAliases.length) return [] as Conversation[];
+  const placeholders = cleanAliases.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT c.*
+       FROM conversations c
+       LEFT JOIN conversation_aliases ca
+         ON ca.conversation_id = c.id
+       WHERE c.account_id = ?
+         AND (c.phone IN (${placeholders}) OR ca.alias IN (${placeholders}))`,
+    )
+    .all(accountId, ...cleanAliases, ...cleanAliases) as Conversation[];
+  return rows;
 }
 
 function coalesceText<T extends string | null>(primary: T, fallback: T) {
@@ -636,10 +680,7 @@ function mergeConversationDuplicates(
   input: { name?: string | null; avatarUrl?: string | null },
 ) {
   const db = getDb();
-  const placeholders = phones.map(() => "?").join(",");
-  const conversations = db
-    .prepare(`SELECT * FROM conversations WHERE account_id = ? AND phone IN (${placeholders})`)
-    .all(accountId, ...phones) as Conversation[];
+  const conversations = findConversationsByAliases(db, accountId, phones);
 
   if (conversations.length <= 1) return;
 
@@ -670,6 +711,8 @@ function mergeConversationDuplicates(
 
       mergeCustomerProfile(db, target.id, source.id);
       db.prepare("UPDATE messages SET conversation_id = ? WHERE conversation_id = ?").run(target.id, source.id);
+      db.prepare("UPDATE OR IGNORE conversation_aliases SET conversation_id = ? WHERE conversation_id = ?").run(target.id, source.id);
+      db.prepare("DELETE FROM conversation_aliases WHERE conversation_id = ?").run(source.id);
       db.prepare("UPDATE outbox SET conversation_id = ?, phone = ? WHERE conversation_id = ?").run(
         target.id,
         target.phone,
@@ -690,6 +733,7 @@ function mergeConversationDuplicates(
         WHERE id = ?
       `,
     ).run(mergedName, mergedAvatarUrl, mergedMode, mergedLabel, mergedStage, mergedLastMessageAt, target.id);
+    attachConversationAliases(db, accountId, target.id, phones);
   })();
 }
 
@@ -701,6 +745,8 @@ export function updateConversationContact(
   const cleanPhones = Array.from(new Set(phones.map((phone) => phone.trim()).filter(Boolean)));
   if (!cleanPhones.length) return;
   mergeConversationDuplicates(accountId, cleanPhones, input);
+  const current = findConversationsByAliases(getDb(), accountId, cleanPhones);
+  if (current.length) attachConversationAliases(getDb(), accountId, pickCanonicalConversation(current).id, cleanPhones);
 
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -717,9 +763,18 @@ export function updateConversationContact(
   }
   if (!fields.length) return;
 
-  const placeholders = cleanPhones.map(() => "?").join(",");
+  const matchedIds = current.map((conversation) => conversation.id);
+  if (matchedIds.length) {
+    const idPlaceholders = matchedIds.map(() => "?").join(",");
+    getDb()
+      .prepare(`UPDATE conversations SET ${fields.join(", ")} WHERE id IN (${idPlaceholders})`)
+      .run(...values, ...matchedIds);
+    return;
+  }
+
+  const phonePlaceholders = cleanPhones.map(() => "?").join(",");
   getDb()
-    .prepare(`UPDATE conversations SET ${fields.join(", ")} WHERE account_id = ? AND phone IN (${placeholders})`)
+    .prepare(`UPDATE conversations SET ${fields.join(", ")} WHERE account_id = ? AND phone IN (${phonePlaceholders})`)
     .run(...values, accountId, ...cleanPhones);
 }
 
