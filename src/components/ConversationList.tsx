@@ -5,7 +5,7 @@ import { CHAT_LABELS, labelColor, parseLabels } from "./labels";
 import { PIPELINE_STAGES, pipelineStageColor } from "./pipeline";
 import type { Conversation, PipelineStage } from "./types";
 
-const CLOSED_STAGES = new Set<PipelineStage>(["Cliente cerrado"]);
+const CLOSED_STAGES = new Set<PipelineStage>(["Cliente cerrado", "No es cliente"]);
 
 function normalizeSearch(value: string) {
   return value

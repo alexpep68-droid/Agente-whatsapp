@@ -7,6 +7,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
   "Cita",
   "Instalación",
   "Cliente cerrado",
+  "No es cliente",
 ];
 
 export function pipelineStageColor(stage: string) {
@@ -16,5 +17,6 @@ export function pipelineStageColor(stage: string) {
   if (stage === "Cita") return "bg-purple-100 text-purple-800";
   if (stage === "Instalación") return "bg-rose-100 text-rose-800";
   if (stage === "Cliente cerrado") return "bg-emerald-100 text-emerald-800";
+  if (stage === "No es cliente") return "bg-zinc-100 text-zinc-700";
   return "bg-zinc-100 text-zinc-800";
 }

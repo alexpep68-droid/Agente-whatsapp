@@ -14,7 +14,8 @@ export type PipelineStage =
   | "Cotización enviada"
   | "Cita"
   | "Instalación"
-  | "Cliente cerrado";
+  | "Cliente cerrado"
+  | "No es cliente";
 
 export interface Account {
   id: number;

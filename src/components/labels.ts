@@ -7,6 +7,8 @@ export const CHAT_LABELS = [
   { name: "Pendientes", color: "bg-amber-400" },
   { name: "Enviar Cotizacion", color: "bg-amber-400" },
   { name: "Clientes", color: "bg-amber-400" },
+  { name: "Colaborador", color: "bg-teal-400" },
+  { name: "Proveedor", color: "bg-orange-400" },
 ] as const;
 
 export function parseLabels(value: string | null | undefined) {

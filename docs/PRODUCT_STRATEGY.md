@@ -112,6 +112,7 @@ Prioridad alta:
 - Responsable del cliente.
 - Vista de clientes sin seguimiento.
 - Dashboard simple de pendientes.
+- Separacion clara entre clientes, colaboradores y proveedores.
 
 Resultado esperado: el negocio sabe a quien responder, quien esta pendiente y que cliente puede cerrar venta.
 
@@ -237,6 +238,19 @@ Crear una nueva pantalla solo si:
 - La funcion se usara con frecuencia.
 
 Si la accion puede resolverse con un modal, panel lateral o boton dentro del chat, evitar crear una pantalla nueva.
+
+## Reglas Para Embudo Y Etiquetas
+
+El embudo representa el avance comercial de una conversacion. Debe responder: en que punto de la venta esta este cliente.
+
+Las etiquetas representan contexto adicional. Deben responder: que caracteristica, origen o categoria extra tiene este contacto.
+
+Reglas:
+
+- No duplicar una etapa del embudo como etiqueta.
+- Usar "No es cliente" para conversaciones que no pertenecen al flujo comercial.
+- Usar etiquetas como "Colaborador" o "Proveedor" para contactos internos o externos que no deben contarse como prospectos.
+- Mantener los reportes comerciales enfocados solo en clientes y prospectos reales.
 
 ## Reglas Para Automatizaciones
 
