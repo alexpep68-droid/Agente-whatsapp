@@ -717,21 +717,26 @@ export async function listConversations(accountId: number): Promise<Conversation
 
   const { data: messages, error: messagesError } = await client
     .from("messages")
-    .select("conversation_id, content, created_at, id")
+    .select("conversation_id, content, role, created_at, id")
     .in("conversation_id", ids)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
   if (messagesError) fail(messagesError, "No se pudieron leer los previews");
 
   const previews = new Map<number, string>();
+  const roles = new Map<number, MessageRole>();
   for (const message of messages || []) {
     const conversationId = Number(message.conversation_id);
-    if (!previews.has(conversationId)) previews.set(conversationId, String(message.content || ""));
+    if (!previews.has(conversationId)) {
+      previews.set(conversationId, String(message.content || ""));
+      roles.set(conversationId, String(message.role || "") as MessageRole);
+    }
   }
 
   return conversations.map((conversation) => ({
     ...conversation,
     last_message_preview: previews.get(conversation.id) ?? null,
+    last_message_role: roles.get(conversation.id) ?? null,
   }));
 }
 

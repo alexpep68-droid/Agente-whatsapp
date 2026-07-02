@@ -860,7 +860,9 @@ export function listConversations(accountId: number): Conversation[] {
     .prepare(`
       SELECT c.*,
         (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1)
-          AS last_message_preview
+          AS last_message_preview,
+        (SELECT m.role FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1)
+          AS last_message_role
       FROM conversations c
       WHERE c.account_id = ?
       ORDER BY COALESCE(c.last_message_at, c.created_at) DESC

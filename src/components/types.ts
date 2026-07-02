@@ -37,6 +37,7 @@ export interface Conversation {
   last_message_at: number | null;
   created_at: number;
   last_message_preview?: string | null;
+  last_message_role?: MessageRole | null;
 }
 
 export interface Message {

@@ -5,6 +5,8 @@ import { CHAT_LABELS, labelColor, parseLabels } from "./labels";
 import { PIPELINE_STAGES, pipelineStageColor } from "./pipeline";
 import type { Conversation, PipelineStage } from "./types";
 
+const CLOSED_STAGES = new Set<PipelineStage>(["Cliente cerrado"]);
+
 function normalizeSearch(value: string) {
   return value
     .toLowerCase()
@@ -36,6 +38,10 @@ function displayContactId(value: string) {
   return value.includes("@lid") ? `ID WhatsApp ${label}` : `+${label}`;
 }
 
+function needsFollowUp(conversation: Conversation) {
+  return conversation.last_message_role === "user" && !CLOSED_STAGES.has(conversation.pipeline_stage);
+}
+
 export function ConversationList({
   conversations,
   selectedId,
@@ -45,14 +51,17 @@ export function ConversationList({
   selectedId: number | null;
   onSelect: (conversation: Conversation) => void;
 }) {
-  const [filter, setFilter] = useState<"all" | "favorites" | "groups">("all");
+  const [filter, setFilter] = useState<"all" | "followup" | "favorites" | "groups">("all");
   const [search, setSearch] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
   const [stageFilter, setStageFilter] = useState<PipelineStage | "">("");
+  const followUpCount = useMemo(() => conversations.filter(needsFollowUp).length, [conversations]);
   const filtered = useMemo(() => {
     const searchTerm = normalizeSearch(search);
     let byMainFilter =
-      filter === "favorites"
+      filter === "followup"
+        ? conversations.filter(needsFollowUp)
+        : filter === "favorites"
         ? conversations.filter((conversation) => parseLabels(conversation.label).includes("Cliente potencial"))
         : filter === "groups"
           ? []
@@ -92,6 +101,9 @@ export function ConversationList({
     if (filter === "favorites") {
       return "Marca una conversacion como Cliente potencial para verla aqui.";
     }
+    if (filter === "followup") {
+      return "No hay clientes esperando respuesta. Buen momento para revisar cotizaciones o preparar seguimiento.";
+    }
     return "Los grupos estan fuera del alcance de esta version inicial.";
   }, [filter, labelFilter, search, stageFilter]);
 
@@ -118,7 +130,7 @@ export function ConversationList({
             </button>
           ) : null}
         </div>
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             className={`rounded-full border px-3 py-1 text-sm ${
               filter === "all" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-zinc-300"
@@ -127,6 +139,15 @@ export function ConversationList({
             type="button"
           >
             Todos
+          </button>
+          <button
+            className={`rounded-full border px-3 py-1 text-sm ${
+              filter === "followup" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-zinc-300"
+            }`}
+            onClick={() => setFilter("followup")}
+            type="button"
+          >
+            Pendientes{followUpCount ? ` ${followUpCount}` : ""}
           </button>
           <button
             className={`rounded-full border px-3 py-1 text-sm ${
